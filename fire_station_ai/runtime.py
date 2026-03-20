@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from .cfr import CFRPolicy
 from .env import Action, ActionType, Observation, PlayerProfile, Seat
 from .trainer import GenomePolicy, PolicyGenome
 
@@ -81,16 +82,21 @@ def load_saved_policy(policy_path: str) -> Dict[str, Any]:
     with open(policy_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
 
-    genome = payload.get("genome", {})
     codename = payload.get("model_name") or payload.get("model_codename")
     if not codename:
         codename = os.path.basename(os.path.dirname(policy_path))
-    policy = GenomePolicy(PolicyGenome(**genome), name=codename)
+    policy_type = payload.get("policy_type", "genome_policy")
+    if policy_type == "cfr_policy":
+        policy = CFRPolicy.from_payload(payload)
+    else:
+        genome = payload.get("genome", {})
+        policy = GenomePolicy(PolicyGenome(**genome), name=codename)
     return {
         "path": policy_path,
         "codename": codename,
-        "policy_type": payload.get("policy_type", "genome_policy"),
-        "genome": genome,
+        "policy_type": policy_type,
+        "genome": payload.get("genome", {}),
+        "strategy_table": payload.get("strategy_table", {}),
         "policy": policy,
         "payload": payload,
     }

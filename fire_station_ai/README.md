@@ -1,293 +1,154 @@
 # Fire Station AI Sandbox
 
-这个目录把“火烧洋油站”从终端交互里拆出来，做成一个可以训练、测试、自博弈的纯逻辑环境。
+这个目录提供“火烧洋油站”的独立训练环境、终端训练器和 Casino 桥接器。
 
-## 先回答你刚才问的几个问题
+## 目录
 
-### 1. 什么叫“离散动作”
+- `env.py`
+  纯逻辑环境，可脱离终端界面跑单手模拟。
+- `trainer.py`
+  进化式训练核心。
+- `train.py`
+  进化式训练入口。
+- `cfr.py`
+  CFR / regret matching 训练核心与策略表运行时。
+- `cfr_train.py`
+  CFR / regret matching 训练入口。
+- `runtime.py`
+  读取保存模型，并把动作桥接回 `casino.py`。
+- `naming.py`
+  模型代号词库。
+- `runs/`
+  默认训练输出目录。
 
-离散动作就是把 AI 在某一步能做的选择，压成一个有限集合。
+## 直接可用
 
-在这个游戏里，如果让 AI 直接输出“加注 17 还是 18 还是 19”，那动作空间会非常碎，很难训练。
-
-所以我们先把动作离散化成：
-
-- `fold`
-- `call`
-- `min_raise`
-- `double_raise`
-- `pressure_raise`
-- `all_in`
-
-这样做的好处是：
-
-- 训练稳定很多
-- 搜索和自博弈都更容易
-- 后面要接神经网络时，输出层也更简单
-
-如果以后你想保留“精确加注金额”，这里也预留了 `raise_amount` 这个扩展动作。
-
-### 2. 什么叫“非神经网络 AI”
-
-这里说的不是“没有智能”，而是不用深度神经网络来做主决策。
-
-更适合你这个项目的非神经网络路线，通常有这些：
-
-- 规则策略：你现在已经在用
-- 搜索策略：把未来几步展开，算收益
-- CFR / Regret Matching：不靠标签数据，靠自博弈逐步逼近稳定策略
-- 表格法 / 小状态值函数：直接记状态-动作价值
-
-对你这个小游戏，真正值得优先考虑的是：
-
-- 先做规则基线
-- 再做自博弈评估
-- 然后尝试 CFR 或简化版 regret matching
-
-### 3. 梯度提升树能不能做
-
-可以做，但通常不是第一选择。
-
-梯度提升树更适合：
-
-- 你已经有很多历史对局数据
-- 你想做“模仿玩家”或“预测下一步行为”
-- 你想做一个 value model，估计当前局面胜率
-
-但你现在最大的问题不是“分类器不够强”，而是“没有现成标签数据，而且这是一个顺序博弈问题”。
-
-所以第一阶段更适合：
-
-- 自博弈
-- 搜索
-- CFR 一类方法
-
-等我们积累了足够对局日志，再考虑：
-
-- GBDT 做行为预测
-- 小神经网络做策略网络
-- 神经网络 + 搜索混合
-
-### 4. 难度是不是一定要多个模型
-
-不一定，很多时候一个强模型就够了。
-
-比较实用的做法是：
-
-- 先训练或设计一个“强策略”
-- `easy` 难度：加大随机性，增加明显失误概率
-- `normal` 难度：轻度随机
-- `hard` 难度：接近原始强策略
-
-这比维护三四个不同模型更轻，也更容易调参。
-
-这个目录里的 `DifficultyPolicy` 就是在做这件事。
-
-## 新增的终端训练器
-
-现在已经补了一套纯终端训练器，不需要 HTML。
-
-入口命令：
+进化式训练：
 
 ```bash
-python -m fire_station_ai.train
+python -m fire_station_ai.train --preset balanced
 ```
 
-它做的事情是：
+CFR / regret matching：
 
-- 用一组可解释参数描述 AI 风格
-- 每一代随机变异出很多候选策略
-- 让候选策略去和固定对手池、当前冠军、历史冠军池对抗
-- 在不同底注和不同随机种子上重复评估，减少运气误差
-- 在终端直接打印中文摘要、ASCII 图表和自动解读
+```bash
+python -m fire_station_ai.cfr_train --preset balanced
+```
 
-终端里看到的 `score` 是“按计划对局手数归一化后的平均筹码收益”，这样不会因为某一代提早打爆对手就让数字看起来失真。
-
-### 直接可用的三套命令
-
-1. 快速试跑
+快速试跑：
 
 ```bash
 python -m fire_station_ai.train --preset quick
+python -m fire_station_ai.cfr_train --preset quick
 ```
 
-2. 平衡模式
+## 常用预设
 
-```bash
-python -m fire_station_ai.train --preset balanced
-```
+- `quick`
+  快速确认流程是否正常。
+- `balanced`
+  默认推荐，速度和稳定性较平衡。
+- `robust`
+  更重视泛化，训练更久。
 
-3. 优先泛化
-
-```bash
-python -m fire_station_ai.train --preset robust
-```
-
-如果你现在只想要一个“默认就很不错”的命令，我建议直接用：
-
-```bash
-python -m fire_station_ai.train --preset balanced
-```
-
-### 常用参数
+## 进化式训练常用参数
 
 ```bash
 python -m fire_station_ai.train ^
   --preset robust ^
-  --seed 7
+  --seed 7 ^
+  --bet-set 5,10,25 ^
+  --validation-bet-set 5,10,25,50
 ```
-
-参数含义：
 
 - `--generations`
-  训练多少代
+  训练多少代。
 - `--population-size`
-  每代测试多少个候选策略
+  每代候选数量。
 - `--elite-count`
-  每代保留多少个最强候选
+  每代保留的精英数量。
 - `--hands-per-eval`
-  每个候选对打多少手来估分
+  单次评估的对局手数。
 - `--validation-hands`
-  每代冠军额外做多少手验证
-- `--validation-repeats`
-  验证时重复多少轮，减少偶然性
+  验证局手数。
 - `--mutation-sigma`
-  每代随机扰动有多大
-- `--eval-repeats`
-  每个候选和同一批对手重复评估几次，减少运气波动
+  变异强度。
 - `--random-injection`
-  每代塞进多少比例的全新随机候选，防止过早卡住
-- `--hall-of-fame-size`
-  保留多少个历史强者加入训练对抗池
+  每代随机新血比例。
 - `--bet-set`
-  训练时使用哪些底注，例如 `5,10,25`
+  训练底注集合。
 - `--validation-bet-set`
-  验证时使用哪些底注
+  验证底注集合。
 - `--init-mode`
-  初始中心策略，支持 `default`、`random`、`blend`
-- `--seed`
-  随机种子，方便复现实验
-- `--preset`
-  快速套用 `quick / balanced / robust`
-- `--no-progress`
-  关闭 `tqdm` 进度条
-- `--no-save`
-  只看终端结果，不保存 `json`
+  初始中心策略，支持 `default / random / blend`。
 
-### 参数怎么调
-
-- 想先看功能是不是正常：
-  `--preset quick`
-- 想默认就比较稳：
-  `--preset balanced`
-- 想优先减少过拟合、增强泛化：
-  `--preset robust`
-- 如果冠军一直不变：
-  提高 `--random-injection` 到 `0.25 ~ 0.35`
-- 如果候选变化太小：
-  提高 `--mutation-sigma` 到 `0.12 ~ 0.18`
-- 如果结果特别看运气：
-  提高 `--eval-repeats` 和 `--validation-repeats`
-- 如果训练强但验证差：
-  扩大 `--bet-set` 和 `--validation-bet-set`
-- 如果你怀疑初始模板太强，把搜索空间压住了：
-  用 `--init-mode blend` 或 `--init-mode random`
-
-## 目录说明
-
-- `env.py`
-  纯逻辑环境，不依赖终端输入输出
-- `policies.py`
-  基线策略和难度包装器
-- `selfplay.py`
-  自博弈入口，用来快速跑对局
-- `trainer.py`
-  训练逻辑，负责候选生成、评估和保存结果
-- `train.py`
-  终端入口，负责打印图表和新手向摘要
-- `adapter.py`
-  未来接回 `casino.py` 的转接辅助
-
-## 现在这套环境解决了什么
-
-现在你已经可以：
-
-- 单独跑一手游戏，不进主程序
-- 给两边都挂策略，跑很多手自博弈
-- 用同一个“强策略”派生出不同难度
-- 在终端直接训练一个可解释策略，并看每代变化
-- 后面把模型用外挂方式挂回主游戏
-
-## 还没做的部分
-
-这个目录现在还没有这些更进阶的训练器：
-
-- CFR 训练器
-- PPO / DQN 训练器
-- 日志回放训练器
-
-但已经有一版可用的“进化式自博弈训练器”，足够让我们先把整条链路跑通。
-
-## 快速试跑
-
-在项目根目录运行：
+## CFR 训练常用参数
 
 ```bash
-python -m fire_station_ai.selfplay --hands 500
+python -m fire_station_ai.cfr_train ^
+  --preset robust ^
+  --seed 7 ^
+  --bet-set 5,10,25 ^
+  --validation-bet-set 5,10,25,50 ^
+  --stack-set 700,1000,1500
 ```
 
-你会得到一个简单的自博弈统计结果。
+- `--iterations`
+  自博弈训练轮数。
+- `--checkpoint-interval`
+  每隔多少轮做一次评估和记录。
+- `--hands-per-eval`
+  训练池评估手数。
+- `--validation-hands`
+  验证手数。
+- `--bet-set`
+  训练底注集合。
+- `--validation-bet-set`
+  验证底注集合。
+- `--stack-set`
+  训练时采样的筹码集合。
 
-如果你想直接训练：
+## 参数建议
 
-```bash
-python -m fire_station_ai.train
-```
+- 想先看通路：用 `quick`。
+- 想默认稳定一些：用 `balanced`。
+- 想增加泛化：扩大 `bet-set`、`validation-bet-set`、`stack-set`。
+- 进化式冠军长期不变：提高 `--random-injection` 或 `--mutation-sigma`。
+- CFR 曲线太早停滞：优先增加 `--iterations`。
+- 结果波动太大：提高 `--eval-repeats` 和 `--validation-repeats`。
 
-训练结束后默认会在 `fire_station_ai/runs/` 里保存：
+## 输出文件
+
+每次训练默认会在 `fire_station_ai/runs/` 下生成独立目录，包含：
 
 - `summary.json`
+  训练摘要。
 - `best_policy.json`
+  可被运行时加载的策略文件。
 - `insight_zh.txt`
+  自动中文解读。
 
-每个保存出来的模型现在都会带一个中文代号，例如：
-
-- `霜刃风纹狐`
-- `冷焰筹术师`
-- `静海夜行鲨`
-
-这些代号会写进 `best_policy.json`，后面在 `casino.py` 里切换模型时就能直接看到。
+保存出来的模型会带一个中文代号，Casino 里会直接显示这个名字。
 
 ## 在 Casino 里使用训练模型
 
-现在 `casino.py` 已经接上了桥接器。
-
-进入“火烧洋油站”后，在选底注的界面可以输入：
+进入“火烧洋油站”后，在选底注界面输入：
 
 - `M`
-  切换决策核心
+  打开决策核心选择
 
-你可以在这里选择：
+你可以在这里切换：
 
 - `规则庄家`
-- 某个训练出来的模型代号
+- 进化式训练模型
+- CFR 训练模型
 
-选择后，桌面上的 NPC 形象和筹码阶段还是保留原来的关卡设计，但真正的决策逻辑会切换成你训练出来的模型。
+训练模型保存在 `fire_station_ai/runs/` 下时，`casino.py` 会通过 `runtime.py` 自动发现并加载。
 
-## 之后推荐路线
+## 验证命令
 
-1. 先确认环境和转接层是稳定的
-2. 用训练出来的 `best_policy.json` 做第一版外挂 AI
-3. 补一个对局采样器，自动生成更多训练数据
-4. 再上 CFR 或小型神经网络
-
-## 和主游戏对接的思路
-
-后面你可以在 `casino.py` 里保留现有 UI，然后把真正的 AI 决策改成：
-
-1. 从主游戏当前局面构建环境状态
-2. 读取模型或策略对象
-3. 让策略输出动作
-4. 把动作翻译回主游戏的 `raise/call/fold`
-
-`adapter.py` 已经给这个方向留了接口。
+```bash
+python -m compileall casino.py fire_station_ai
+python -m fire_station_ai.train --preset quick
+python -m fire_station_ai.cfr_train --preset quick
+```

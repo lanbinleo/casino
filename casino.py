@@ -2337,7 +2337,7 @@ def choose_fire_station_ai_mode(chips, slot=None, stats=None, profile=None):
                 run_name = os.path.basename(model["run_dir"])
                 print(f"    {colored(str(idx), C.GREEN)}  {model['codename']}  训练 {training_score}  验证 {validation_win}  {colored(run_name, C.DIM)}{current_tag}")
         else:
-            print(colored("  还没有可用的训练模型。先运行 `python -m fire_station_ai.train`。", C.DIM))
+            print(colored("  还没有可用的训练模型。先运行 `python -m fire_station_ai.train` 或 `python -m fire_station_ai.cfr_train`。", C.DIM))
 
         print(f"\n    {colored('0', C.RED)}  返回")
 

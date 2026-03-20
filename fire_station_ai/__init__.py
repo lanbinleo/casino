@@ -1,6 +1,7 @@
 """Training toolkit for the Fire Station mini-game."""
 
 from .adapter import build_env_from_casino, to_casino_command
+from .cfr import CFRPolicy, CFRTrainer, CFRTrainerConfig
 from .env import (
     Action,
     ActionType,
@@ -28,6 +29,9 @@ __all__ = [
     "discover_saved_policies",
     "load_saved_policy",
     "choose_model_action",
+    "CFRPolicy",
+    "CFRTrainerConfig",
+    "CFRTrainer",
     "PolicyGenome",
     "GenomePolicy",
     "TrainerConfig",
