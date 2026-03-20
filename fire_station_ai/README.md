@@ -97,22 +97,43 @@ python -m fire_station_ai.train
 
 - 用一组可解释参数描述 AI 风格
 - 每一代随机变异出很多候选策略
-- 让候选策略去和固定对手池自博弈
-- 选出更强的几组参数继续繁殖下一代
-- 在终端直接打印 ASCII 图表和总结
+- 让候选策略去和固定对手池、当前冠军、历史冠军池对抗
+- 在不同底注和不同随机种子上重复评估，减少运气误差
+- 在终端直接打印中文摘要、ASCII 图表和自动解读
 
 终端里看到的 `score` 是“按计划对局手数归一化后的平均筹码收益”，这样不会因为某一代提早打爆对手就让数字看起来失真。
+
+### 直接可用的三套命令
+
+1. 快速试跑
+
+```bash
+python -m fire_station_ai.train --preset quick
+```
+
+2. 平衡模式
+
+```bash
+python -m fire_station_ai.train --preset balanced
+```
+
+3. 优先泛化
+
+```bash
+python -m fire_station_ai.train --preset robust
+```
+
+如果你现在只想要一个“默认就很不错”的命令，我建议直接用：
+
+```bash
+python -m fire_station_ai.train --preset balanced
+```
 
 ### 常用参数
 
 ```bash
 python -m fire_station_ai.train ^
-  --generations 20 ^
-  --population-size 16 ^
-  --elite-count 4 ^
-  --hands-per-eval 120 ^
-  --validation-hands 260 ^
-  --mutation-sigma 0.12 ^
+  --preset robust ^
   --seed 7
 ```
 
@@ -128,12 +149,49 @@ python -m fire_station_ai.train ^
   每个候选对打多少手来估分
 - `--validation-hands`
   每代冠军额外做多少手验证
+- `--validation-repeats`
+  验证时重复多少轮，减少偶然性
 - `--mutation-sigma`
   每代随机扰动有多大
+- `--eval-repeats`
+  每个候选和同一批对手重复评估几次，减少运气波动
+- `--random-injection`
+  每代塞进多少比例的全新随机候选，防止过早卡住
+- `--hall-of-fame-size`
+  保留多少个历史强者加入训练对抗池
+- `--bet-set`
+  训练时使用哪些底注，例如 `5,10,25`
+- `--validation-bet-set`
+  验证时使用哪些底注
+- `--init-mode`
+  初始中心策略，支持 `default`、`random`、`blend`
 - `--seed`
   随机种子，方便复现实验
+- `--preset`
+  快速套用 `quick / balanced / robust`
+- `--no-progress`
+  关闭 `tqdm` 进度条
 - `--no-save`
   只看终端结果，不保存 `json`
+
+### 参数怎么调
+
+- 想先看功能是不是正常：
+  `--preset quick`
+- 想默认就比较稳：
+  `--preset balanced`
+- 想优先减少过拟合、增强泛化：
+  `--preset robust`
+- 如果冠军一直不变：
+  提高 `--random-injection` 到 `0.25 ~ 0.35`
+- 如果候选变化太小：
+  提高 `--mutation-sigma` 到 `0.12 ~ 0.18`
+- 如果结果特别看运气：
+  提高 `--eval-repeats` 和 `--validation-repeats`
+- 如果训练强但验证差：
+  扩大 `--bet-set` 和 `--validation-bet-set`
+- 如果你怀疑初始模板太强，把搜索空间压住了：
+  用 `--init-mode blend` 或 `--init-mode random`
 
 ## 目录说明
 
@@ -190,6 +248,31 @@ python -m fire_station_ai.train
 
 - `summary.json`
 - `best_policy.json`
+- `insight_zh.txt`
+
+每个保存出来的模型现在都会带一个中文代号，例如：
+
+- `霜刃风纹狐`
+- `冷焰筹术师`
+- `静海夜行鲨`
+
+这些代号会写进 `best_policy.json`，后面在 `casino.py` 里切换模型时就能直接看到。
+
+## 在 Casino 里使用训练模型
+
+现在 `casino.py` 已经接上了桥接器。
+
+进入“火烧洋油站”后，在选底注的界面可以输入：
+
+- `M`
+  切换决策核心
+
+你可以在这里选择：
+
+- `规则庄家`
+- 某个训练出来的模型代号
+
+选择后，桌面上的 NPC 形象和筹码阶段还是保留原来的关卡设计，但真正的决策逻辑会切换成你训练出来的模型。
 
 ## 之后推荐路线
 

@@ -14,6 +14,7 @@ from datetime import datetime
 GAME_VERSION = "v1.1.2"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
+FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
 MAX_SLOTS = 5
 INITIAL_CHIPS = 1000
 MAX_GOVERNMENT_AID = 3
@@ -146,6 +147,9 @@ def default_fire_station_state():
         "mood": opener["mood"],
         "personality": opener["personality"],
         "player_profile": default_player_profile(),
+        "ai_mode": "classic",
+        "ai_model_path": "",
+        "ai_model_name": "",
     }
 
 
@@ -237,6 +241,18 @@ def normalize_fire_station_state(state):
     base["personality"] = opponent["personality"]
     if base.get("ai_chips", 0) <= 0:
         base["ai_chips"] = opponent["chips"]
+    ai_mode = str(base.get("ai_mode", "classic") or "classic").lower()
+    if ai_mode not in {"classic", "model"}:
+        ai_mode = "classic"
+    ai_model_path = str(base.get("ai_model_path", "") or "")
+    ai_model_name = str(base.get("ai_model_name", "") or "")
+    if ai_mode == "model" and (not ai_model_path or not os.path.exists(ai_model_path)):
+        ai_mode = "classic"
+        ai_model_path = ""
+        ai_model_name = ""
+    base["ai_mode"] = ai_mode
+    base["ai_model_path"] = ai_model_path
+    base["ai_model_name"] = ai_model_name
     return base
 
 
@@ -529,6 +545,10 @@ def record_game_result(stats, key, result, delta, special_inc=0):
 
 def runner_available(profile):
     return profile.get("runner", {}).get("last_day", -1) != profile.get("bank_days_elapsed", 0)
+
+
+def debt_shortfall(chips):
+    return max(0, -safe_int(chips, 0))
 
 
 def build_runner_job():
@@ -944,6 +964,7 @@ def bank_menu(chips, slot, stats, profile):
         header(chips, slot, stats, profile)
         assets = total_assets(chips, profile)
         debt = total_debt(profile)
+        shortfall = debt_shortfall(chips)
         ratio = profile.get("bank_ratio", MIN_BANK_RATIO)
         max_withdraw = max_bank_withdrawal(chips, profile)
         next_borrow = max_loan_borrow_amount(chips, profile)
@@ -964,6 +985,7 @@ def bank_menu(chips, slot, stats, profile):
             colored("3", C.GREEN) + "  设置安全比率",
             colored("4", C.GREEN) + "  借款",
             colored("5", C.GREEN) + "  还款",
+            (colored("6", C.GREEN) + "  一键补缺") if shortfall > 0 and profile.get("bank", 0) > 0 else (colored("6", C.DIM) + "  一键补缺"),
             colored("0", C.RED) + "  返回大厅",
         ]
         print(colored("\n  ── 银行 ──\n", C.CYAN))
@@ -977,10 +999,13 @@ def bank_menu(chips, slot, stats, profile):
                 "取钱后，现金不能超过 净资产 x 安全比率",
                 "借款按一档→二档→三档开放。",
                 f"每 {DAILY_OPERATION_COUNT} 次操作自动结算一天利息。",
+                "现金为负时，可用一键补缺自动回填。",
                 "",
                 colored("提示", C.YELLOW) + "  利率越高越危险，优先还高档贷款。",
             ], width=42, title="规则说明", color=C.YELLOW)
         ]))
+        if shortfall > 0:
+            print(colored(f"  当前现金欠款 ${shortfall}，在补齐前不能参加任何赌桌。", C.RED))
 
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip()
         if choice == '0':
@@ -1181,6 +1206,43 @@ def bank_menu(chips, slot, stats, profile):
             )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  已还款 ${amount}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '6':
+            if shortfall <= 0:
+                print(colored("  当前没有现金欠款需要补。", C.RED))
+                pause()
+                continue
+            if profile.get("bank", 0) <= 0:
+                print(colored("  银行里没有钱可用于补缺。", C.RED))
+                pause()
+                continue
+            before = state_snapshot(chips, profile)
+            amount = min(profile.get("bank", 0), shortfall)
+            chips += amount
+            profile["bank"] -= amount
+            stats["bank_withdraw_total"] += amount
+            notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "cover_cash_shortfall",
+                details={
+                    "amount": amount,
+                    "shortfall_before": shortfall,
+                    "shortfall_after": debt_shortfall(chips),
+                },
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
+            auto_save(slot, chips, stats, profile)
+            if debt_shortfall(chips) == 0:
+                print(colored(f"  已用银行资金补齐 ${amount}，现金恢复为 ${chips}。", C.GREEN))
+            else:
+                print(colored(f"  已补上 ${amount}，但现金仍欠 ${debt_shortfall(chips)}。", C.YELLOW))
             for notice in notices:
                 print(notice)
             pause()
@@ -2219,7 +2281,137 @@ def personality_name(personality):
         "tight": "沉稳",
         "loose": "豪放",
         "tricky": "诡诈",
+        "model": "模型",
     }.get(personality, personality)
+
+
+_FIRE_STATION_MODEL_CACHE = {}
+
+
+def discover_fire_station_models():
+    try:
+        from fire_station_ai.runtime import discover_saved_policies
+    except Exception:
+        return []
+    return discover_saved_policies(FIRE_STATION_AI_RUNS_DIR)
+
+
+def load_fire_station_model(path):
+    normalized_path = os.path.normpath(path)
+    cached = _FIRE_STATION_MODEL_CACHE.get(normalized_path)
+    if cached is not None:
+        return cached
+    try:
+        from fire_station_ai.runtime import load_saved_policy
+        loaded = load_saved_policy(normalized_path)
+    except Exception:
+        loaded = None
+    _FIRE_STATION_MODEL_CACHE[normalized_path] = loaded
+    return loaded
+
+
+def current_fire_ai_display(fire_state):
+    fire_state = normalize_fire_station_state(fire_state)
+    if fire_state.get("ai_mode") == "model" and fire_state.get("ai_model_name"):
+        return f"训练模型 · {fire_state['ai_model_name']}"
+    return "规则庄家"
+
+
+def choose_fire_station_ai_mode(chips, slot=None, stats=None, profile=None):
+    fire_state = profile["fire_station"]
+    models = discover_fire_station_models()
+
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        print(colored("\n  ── 火烧洋油站：决策核心 ──\n", C.RED))
+        print(colored(f"  当前核心: {current_fire_ai_display(fire_state)}", C.CYAN))
+        print()
+        print(f"    {colored('1', C.GREEN)}  规则庄家")
+
+        if models:
+            for idx, model in enumerate(models, start=2):
+                current_tag = colored(" [当前]", C.YELLOW) if fire_state.get("ai_mode") == "model" and os.path.normpath(fire_state.get("ai_model_path", "")) == os.path.normpath(model["path"]) else ""
+                training_score = f"{model['best_training_score']:.3f}"
+                validation_win = f"{model['validation_win_rate'] * 100:.1f}%"
+                run_name = os.path.basename(model["run_dir"])
+                print(f"    {colored(str(idx), C.GREEN)}  {model['codename']}  训练 {training_score}  验证 {validation_win}  {colored(run_name, C.DIM)}{current_tag}")
+        else:
+            print(colored("  还没有可用的训练模型。先运行 `python -m fire_station_ai.train`。", C.DIM))
+
+        print(f"\n    {colored('0', C.RED)}  返回")
+
+        try:
+            choice = input(colored("  > ", C.YELLOW)).strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+
+        if choice == "0":
+            return
+        if choice == "1":
+            fire_state["ai_mode"] = "classic"
+            fire_state["ai_model_path"] = ""
+            fire_state["ai_model_name"] = ""
+            profile["fire_station"] = fire_state
+            if slot is not None and stats is not None and profile is not None:
+                auto_save(slot, chips, stats, profile)
+            return
+        try:
+            index = int(choice) - 2
+        except ValueError:
+            continue
+        if 0 <= index < len(models):
+            selected = models[index]
+            fire_state["ai_mode"] = "model"
+            fire_state["ai_model_path"] = selected["path"]
+            fire_state["ai_model_name"] = selected["codename"]
+            profile["fire_station"] = fire_state
+            if slot is not None and stats is not None and profile is not None:
+                auto_save(slot, chips, stats, profile)
+            return
+
+
+class FireStationModelAI(FireStationAI):
+    """Bridge a saved training policy into the terminal game."""
+
+    def __init__(self, loaded_model, personality="tight", mood=0.5, player_profile=None, opponent_name="庄家", boss=False, cycle=0):
+        super().__init__(
+            personality=personality,
+            mood=mood,
+            player_profile=player_profile,
+            opponent_name=opponent_name,
+            boss=boss,
+            cycle=cycle,
+        )
+        self.loaded_model = loaded_model
+        self.model_name = loaded_model.get("codename", "未命名模型")
+        self._pending_raise_amount = None
+
+    def decide_model_action(self, my_card, current_bet, pot, my_chips, round_num, player_raised_this_hand, opponent_chips, my_raises=0):
+        from fire_station_ai.runtime import choose_model_action
+
+        action = choose_model_action(
+            self.loaded_model,
+            card_rank=RANK_ORDER[my_card.rank],
+            my_chips=my_chips,
+            opponent_chips=opponent_chips,
+            pot=pot,
+            current_bet=current_bet,
+            round_num=round_num,
+            my_raises=my_raises,
+            opponent_raises=player_raised_this_hand,
+            opponent_profile_dict=self.player_profile,
+            rng_module=random,
+        )
+        self._pending_raise_amount = action.amount
+        return action
+
+    def choose_raise_amount(self, my_card, current_bet, my_chips):
+        if self._pending_raise_amount is not None:
+            amount = int(self._pending_raise_amount)
+            self._pending_raise_amount = None
+            return max(current_bet, min(my_chips, amount))
+        return super().choose_raise_amount(my_card, current_bet, my_chips)
 
 
 def sync_fire_station_state(profile, ai, ai_chips):
@@ -2259,14 +2451,34 @@ def fire_station(chips, slot=None, stats=None, profile=None):
         fire_state = normalize_fire_station_state(fire_state)
         profile["fire_station"] = fire_state
         opponent = current_fire_opponent(fire_state)
-        ai = FireStationAI(
-            personality=opponent["personality"],
-            mood=fire_state.get("mood", opponent["mood"]),
-            player_profile=fire_state.get("player_profile"),
-            opponent_name=opponent["name"],
-            boss=opponent.get("boss", False),
-            cycle=fire_state.get("cycle", 0),
-        )
+        loaded_model = None
+        if fire_state.get("ai_mode") == "model" and fire_state.get("ai_model_path"):
+            loaded_model = load_fire_station_model(fire_state["ai_model_path"])
+            if loaded_model is None:
+                fire_state["ai_mode"] = "classic"
+                fire_state["ai_model_path"] = ""
+                fire_state["ai_model_name"] = ""
+                profile["fire_station"] = fire_state
+
+        if loaded_model is not None:
+            ai = FireStationModelAI(
+                loaded_model=loaded_model,
+                personality=opponent["personality"],
+                mood=fire_state.get("mood", opponent["mood"]),
+                player_profile=fire_state.get("player_profile"),
+                opponent_name=opponent["name"],
+                boss=opponent.get("boss", False),
+                cycle=fire_state.get("cycle", 0),
+            )
+        else:
+            ai = FireStationAI(
+                personality=opponent["personality"],
+                mood=fire_state.get("mood", opponent["mood"]),
+                player_profile=fire_state.get("player_profile"),
+                opponent_name=opponent["name"],
+                boss=opponent.get("boss", False),
+                cycle=fire_state.get("cycle", 0),
+            )
         ai_chips = fire_state.get("ai_chips", opponent["chips"])
 
         clear()
@@ -2287,7 +2499,11 @@ def fire_station(chips, slot=None, stats=None, profile=None):
 
         print(f"  你的筹码: {colored('$' + str(chips), C.GREEN)}")
         print(f"  庄家筹码: {colored('$' + str(ai_chips), C.MAGENTA)}")
-        print(colored(f"  庄家风格: {personality_name(ai.personality)}", C.DIM))
+        print(colored(f"  桌面对手风格: {personality_name(opponent['personality'])}", C.DIM))
+        if loaded_model is not None:
+            print(colored(f"  决策核心: 训练模型 · {loaded_model['codename']}", C.CYAN))
+        else:
+            print(colored(f"  决策核心: 规则庄家 · {personality_name(ai.personality)}", C.DIM))
         print()
 
         tiers = [5, 10, 25, 50, 100]
@@ -2300,12 +2516,17 @@ def fire_station(chips, slot=None, stats=None, profile=None):
         print("  选择底注:")
         for idx, t in enumerate(available):
             print(f"    {colored(str(idx + 1), C.GREEN)}  ${t}")
+        print(f"    {colored('M', C.CYAN)}  切换决策核心")
         print(f"    {colored('0', C.RED)}  返回大厅")
 
         try:
             tc = input(colored("  > ", C.YELLOW)).strip()
         except (EOFError, KeyboardInterrupt):
             return chips
+        if tc.upper() == 'M':
+            choose_fire_station_ai_mode(chips, slot, stats, profile)
+            fire_state = profile["fire_station"]
+            continue
         if tc == '0':
             return chips
         try:
@@ -2358,7 +2579,12 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                 if can_raise:
                     options.append(f"[R] 加注 (最少 +${current_bet}，即总注 ${current_bet * 2})")
                 if last_raiser == "ai" or last_raiser is None:
-                    options.append("[C] 开牌" if last_raiser is None else "[C] 跟注开牌")
+                    if last_raiser is None:
+                        options.append("[C] 开牌")
+                    elif chips >= current_bet:
+                        options.append("[C] 跟注开牌")
+                    else:
+                        options.append(f"[C] 欠款开牌 (将欠 ${current_bet - chips})")
                 options.append("[F] 弃牌")
 
                 for o in options:
@@ -2424,8 +2650,26 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                     continue
 
             else:
-                decision = ai.decide(ai_card, current_bet, pot, ai_chips,
-                                     round_num, player_raises)
+                if isinstance(ai, FireStationModelAI):
+                    model_action = ai.decide_model_action(
+                        ai_card,
+                        current_bet,
+                        pot,
+                        ai_chips,
+                        round_num,
+                        player_raises,
+                        opponent_chips=chips,
+                        my_raises=ai_raises,
+                    )
+                    if model_action.kind.value == "fold":
+                        decision = "fold"
+                    elif model_action.kind.value == "call":
+                        decision = "call"
+                    else:
+                        decision = "raise"
+                else:
+                    decision = ai.decide(ai_card, current_bet, pot, ai_chips,
+                                         round_num, player_raises)
 
                 if decision == "raise" and ai_chips >= current_bet:
                     raise_amt = ai.choose_raise_amount(ai_card, current_bet, ai_chips)
@@ -2584,6 +2828,11 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                     "boss": opponent.get("boss", False),
                     "cycle": opponent.get("cycle", 0),
                 },
+                "ai_engine": {
+                    "mode": fire_state.get("ai_mode", "classic"),
+                    "model_name": fire_state.get("ai_model_name", ""),
+                    "model_path": fire_state.get("ai_model_path", ""),
+                },
                 "base_bet": base_bet,
                 "player_card": card_text(player_card),
                 "ai_card": card_text(ai_card),
@@ -2720,6 +2969,41 @@ def underground_runner(chips, slot=None, stats=None, profile=None):
 
 
 # ============================================================
+# 跳天作弊
+# ============================================================
+def skip_to_next_day(chips, slot, stats, profile):
+    before = state_snapshot(chips, profile)
+    day_before = profile.get("bank_days_elapsed", 0)
+    steps = DAILY_OPERATION_COUNT - operation_progress(profile)
+    if steps <= 0:
+        steps = DAILY_OPERATION_COUNT
+    notices = record_operations(chips, stats, profile, steps)
+    append_history(
+        stats,
+        profile,
+        "system",
+        "skip_to_next_day",
+        details={
+            "steps_added": steps,
+            "day_before": day_before,
+            "day_after": profile.get("bank_days_elapsed", 0),
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=steps,
+    )
+    auto_save(slot, chips, stats, profile)
+    clear()
+    header(chips, slot, stats, profile)
+    print(colored("\n  已快速跳到下一天。", C.YELLOW))
+    print(colored(f"  第 {day_before + 1} 天 -> 第 {profile.get('bank_days_elapsed', 0) + 1} 天", C.DIM))
+    for notice in notices:
+        print(notice)
+    pause()
+    return chips
+
+
+# ============================================================
 # 主菜单
 # ============================================================
 def main():
@@ -2765,8 +3049,11 @@ def main():
         ]
         print(box(menu, width=42, title="游戏大厅", color=C.CYAN))
 
+        cash_shortfall = debt_shortfall(chips)
         if chips <= 0 and profile.get("bank", 0) > 0:
             print(colored("\n  你手上没现金了，可以去银行按安全比率取一些出来。", C.YELLOW))
+        if cash_shortfall > 0:
+            print(colored(f"  当前现金欠款 ${cash_shortfall}，赌桌已锁定。先去银行补缺，或输入 SKIP 跳到下一天。", C.RED))
         if total_debt(profile) > 0:
             print(colored(f"  当前贷款负债 ${total_debt(profile)}，距离下一次结息还差 {DAILY_OPERATION_COUNT - operation_progress(profile)} 步。", C.RED))
         if runner_available(profile):
@@ -2783,6 +3070,17 @@ def main():
             choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         except (EOFError, KeyboardInterrupt):
             break
+
+        if choice == 'SKIP':
+            chips = skip_to_next_day(chips, active_slot, stats, profile)
+            continue
+        if cash_shortfall > 0 and choice in {'1', '2', '3', '4', '5'}:
+            clear()
+            header(chips, active_slot, stats, profile)
+            print(colored("\n  现金为负时不能参加任何赌桌。", C.RED))
+            print(colored("  去银行用一键补缺，或者输入 SKIP 快速跳到下一天。", C.YELLOW))
+            pause()
+            continue
 
         if choice == '1':
             chips = blackjack(chips, active_slot, stats, profile)

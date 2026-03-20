@@ -11,6 +11,7 @@ from .env import (
     StepResult,
 )
 from .policies import DifficultyPolicy, HeuristicPolicy, RandomPolicy
+from .runtime import choose_model_action, discover_saved_policies, load_saved_policy
 from .trainer import EvolutionTrainer, GenomePolicy, PolicyGenome, TrainerConfig
 
 __all__ = [
@@ -24,6 +25,9 @@ __all__ = [
     "RandomPolicy",
     "HeuristicPolicy",
     "DifficultyPolicy",
+    "discover_saved_policies",
+    "load_saved_policy",
+    "choose_model_action",
     "PolicyGenome",
     "GenomePolicy",
     "TrainerConfig",
