@@ -130,6 +130,8 @@ FIRE_STATION_OPPONENTS = [
     },
 ]
 
+FIRE_STATION_BET_TIERS = [5, 10, 25, 50, 100]
+
 RUNNER_TABLES = {
     "client": ["旧码头的修理工", "夜市摊主", "巷口拳馆", "西区酒吧", "后街医务室"],
     "cargo": ["一包芯片", "几卷底片", "封好的纸袋", "一箱零件", "一只冷藏手提箱"],
@@ -2480,6 +2482,22 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                 cycle=fire_state.get("cycle", 0),
             )
         ai_chips = fire_state.get("ai_chips", opponent["chips"])
+        min_fire_bet = min(FIRE_STATION_BET_TIERS)
+
+        if ai_chips < min_fire_bet:
+            sync_fire_station_state(profile, ai, ai_chips)
+            defeated, next_opponent = advance_fire_station(profile, stats)
+            clear()
+            header(chips, slot, stats, profile)
+            print(colored("\n  ── 火烧洋油站 ──\n", C.RED))
+            print(colored(f"  {defeated['name']} 的剩余筹码不足最低底注 ${min_fire_bet}，视为破产。", C.GREEN))
+            if defeated.get("boss"):
+                print(colored(f"  ★ 你击败了 Boss {defeated['name']}！周目提升！", C.YELLOW))
+            else:
+                print(colored(f"  ✓ 你击败了 {defeated['name']}！下一位对手是 {next_opponent['name']}。", C.GREEN))
+            pause()
+            fire_state = profile["fire_station"]
+            continue
 
         clear()
         header(chips, slot, stats, profile)
@@ -2506,7 +2524,7 @@ def fire_station(chips, slot=None, stats=None, profile=None):
             print(colored(f"  决策核心: 规则庄家 · {personality_name(ai.personality)}", C.DIM))
         print()
 
-        tiers = [5, 10, 25, 50, 100]
+        tiers = FIRE_STATION_BET_TIERS
         available = [t for t in tiers if t <= chips and t <= ai_chips]
         if not available:
             print(colored("  筹码不够最低底注了！", C.RED))
@@ -2794,7 +2812,7 @@ def fire_station(chips, slot=None, stats=None, profile=None):
 
         sync_fire_station_state(profile, ai, ai_chips)
 
-        if ai_chips <= 0:
+        if ai_chips < min_fire_bet:
             defeated, next_opponent = advance_fire_station(profile, stats)
             print()
             if defeated.get("boss"):
@@ -2806,7 +2824,7 @@ def fire_station(chips, slot=None, stats=None, profile=None):
         fire_delta = chips - hand_before["cash"]
         if winner == "showdown":
             if pv > av:
-                record_game_result(stats, "fire_station", "win", fire_delta, special_inc=1 if ai_chips <= 0 and opponent.get("boss") else 0)
+                record_game_result(stats, "fire_station", "win", fire_delta, special_inc=1 if ai_chips < min_fire_bet and opponent.get("boss") else 0)
             elif pv < av:
                 record_game_result(stats, "fire_station", "loss", fire_delta)
             else:
@@ -2814,7 +2832,7 @@ def fire_station(chips, slot=None, stats=None, profile=None):
         elif winner == "ai_fold":
             record_game_result(stats, "fire_station", "loss", fire_delta)
         else:
-            record_game_result(stats, "fire_station", "win", fire_delta, special_inc=1 if ai_chips <= 0 and opponent.get("boss") else 0)
+            record_game_result(stats, "fire_station", "win", fire_delta, special_inc=1 if ai_chips < min_fire_bet and opponent.get("boss") else 0)
         append_history(
             stats,
             profile,

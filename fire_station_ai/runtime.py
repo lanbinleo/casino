@@ -128,7 +128,7 @@ def build_model_observation(
         opponent_raises=opponent_raises,
         last_raiser=Seat.PLAYER,
         can_raise=my_chips >= current_bet,
-        call_uses_credit=False,
+        call_uses_credit=my_chips < current_bet,
         my_profile=PlayerProfile().summary(),
         opponent_profile=opponent_profile,
     )
@@ -136,8 +136,8 @@ def build_model_observation(
 
 def build_model_legal_actions(current_bet: int, pot: int, my_chips: int) -> List[Action]:
     actions: List[Action] = []
+    actions.append(Action(ActionType.CALL))
     if my_chips >= current_bet:
-        actions.append(Action(ActionType.CALL))
         candidates = [
             (ActionType.MIN_RAISE, current_bet),
             (ActionType.DOUBLE_RAISE, current_bet * 2),
