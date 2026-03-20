@@ -11,8 +11,9 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.1.0"
+GAME_VERSION = "v1.1.1"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
+EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 MAX_SLOTS = 5
 INITIAL_CHIPS = 1000
 MAX_GOVERNMENT_AID = 3
@@ -147,6 +148,8 @@ def default_profile():
         "retired_at": "",
         "created_at": now_str(),
         "career_high_assets": INITIAL_CHIPS,
+        "export_count": 0,
+        "history": [],
         "slots": {
             "free_spins": 0,
             "free_spin_bet": 0,
@@ -225,12 +228,15 @@ def normalize_profile(profile):
                 base["fire_station"] = normalize_fire_station_state(value)
             elif key == "loans":
                 base["loans"] = normalize_loans(value)
+            elif key == "history" and isinstance(value, list):
+                base["history"] = value
             else:
                 base[key] = value
     base["bank_ratio"] = min(MAX_BANK_RATIO, max(MIN_BANK_RATIO, safe_float(base.get("bank_ratio", 0.5), 0.5)))
     base["bank"] = max(0, safe_int(base.get("bank", 0), 0))
     base["operation_count"] = max(0, safe_int(base.get("operation_count", 0), 0))
     base["bank_days_elapsed"] = max(0, safe_int(base.get("bank_days_elapsed", 0), 0))
+    base["export_count"] = max(0, safe_int(base.get("export_count", 0), 0))
     base["government_aid_used"] = max(0, min(MAX_GOVERNMENT_AID, safe_int(base.get("government_aid_used", 0), 0)))
     base["slots"]["free_spins"] = max(0, safe_int(base["slots"].get("free_spins", 0), 0))
     base["slots"]["free_spin_bet"] = max(0, safe_int(base["slots"].get("free_spin_bet", 0), 0))
@@ -301,6 +307,7 @@ def operation_progress(profile):
 
 def apply_bank_day(chips, stats, profile):
     messages = []
+    before = state_snapshot(chips, profile)
     bank_interest = 0
     if profile.get("bank", 0) > 0:
         bank_interest = max(1, int(round(profile["bank"] * BANK_DAILY_INTEREST)))
@@ -327,6 +334,21 @@ def apply_bank_day(chips, stats, profile):
         summary.append(f"贷款利息 -${debt_interest}")
     if len(summary) > 1:
         messages.append(colored("  [银行结息] " + " / ".join(summary), C.YELLOW))
+    append_history(
+        stats,
+        profile,
+        "bank",
+        "daily_interest",
+        details={
+            "day": profile["bank_days_elapsed"],
+            "deposit_interest": bank_interest,
+            "loan_interest": loan_interest,
+            "loan_interest_total": debt_interest,
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
     return messages
 
 
@@ -385,6 +407,10 @@ def normalized_save_data(slot, data=None):
 def ensure_save_dir():
     os.makedirs(SAVE_DIR, exist_ok=True)
 
+
+def ensure_export_dir():
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+
 def save_path(slot):
     return os.path.join(SAVE_DIR, f"slot_{slot}.json")
 
@@ -441,6 +467,96 @@ def short_save_time(text):
     return text
 
 
+def state_snapshot(chips, profile):
+    return {
+        "cash": int(chips),
+        "bank": int(profile.get("bank", 0)),
+        "debt": int(total_debt(profile)),
+        "net_assets": int(total_assets(chips, profile)),
+        "bank_ratio": float(profile.get("bank_ratio", 0.5)),
+        "operation_cycle_progress": int(operation_progress(profile)),
+        "bank_days_elapsed": int(profile.get("bank_days_elapsed", 0)),
+    }
+
+
+def append_history(stats, profile, category, action, details=None, before=None, after=None, operation_delta=0):
+    history = profile.setdefault("history", [])
+    entry = {
+        "id": len(history) + 1,
+        "time": now_str(),
+        "version": GAME_VERSION,
+        "category": category,
+        "action": action,
+        "operation_delta": max(0, safe_int(operation_delta, 0)),
+        "operations_total": safe_int(stats.get("operations_count", 0), 0),
+        "details": details or {},
+        "before": before,
+        "after": after,
+    }
+    history.append(entry)
+    return entry
+
+
+def export_filename(slot, profile):
+    export_index = profile.get("export_count", 0)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"slot_{slot}_review_{export_index}_{timestamp}.json"
+
+
+def build_export_payload(slot, chips, stats, profile):
+    return {
+        "metadata": {
+            "game": "Leo's Casino",
+            "version": GAME_VERSION,
+            "slot": slot,
+            "exported_at": now_str(),
+            "created_at": profile.get("created_at", ""),
+            "retired": bool(profile.get("retired")),
+            "retired_at": profile.get("retired_at", ""),
+            "history_entries": len(profile.get("history", [])),
+            "export_count": profile.get("export_count", 0),
+        },
+        "summary": {
+            "cash": chips,
+            "bank": profile.get("bank", 0),
+            "debt": total_debt(profile),
+            "net_assets": total_assets(chips, profile),
+            "bank_ratio": profile.get("bank_ratio", 0.5),
+            "bank_days_elapsed": profile.get("bank_days_elapsed", 0),
+            "operations_total": stats.get("operations_count", 0),
+            "government_aid_used": profile.get("government_aid_used", 0),
+            "career_high_assets": profile.get("career_high_assets", INITIAL_CHIPS),
+        },
+        "stats": stats,
+        "loans": profile.get("loans", []),
+        "history": profile.get("history", []),
+    }
+
+
+def export_review_data(slot, chips, stats, profile):
+    ensure_export_dir()
+    before = state_snapshot(chips, profile)
+    profile["export_count"] = profile.get("export_count", 0) + 1
+    append_history(
+        stats,
+        profile,
+        "system",
+        "export_review",
+        details={
+            "slot": slot,
+            "export_index": profile["export_count"],
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
+    payload = build_export_payload(slot, chips, stats, profile)
+    path = os.path.join(EXPORT_DIR, export_filename(slot, profile))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
+
+
 def show_career_summary(chips, stats, profile, slot, wait=True):
     clear()
     assets = total_assets(chips, profile)
@@ -473,6 +589,20 @@ def show_career_summary(chips, stats, profile, slot, wait=True):
     print(box(lines, width=50, title="生涯总结", color=C.RED if profile.get("retired") else C.MAGENTA))
     if wait:
         pause()
+
+
+def career_summary_menu(chips, stats, profile, slot):
+    while True:
+        show_career_summary(chips, stats, profile, slot, wait=False)
+        print(colored("\n  [E] 导出复盘数据  [Enter] 返回", C.DIM))
+        choice = input(colored("  > ", C.YELLOW)).strip().upper()
+        if choice == 'E':
+            path = export_review_data(slot, chips, stats, profile)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"\n  已导出到: {path}", C.GREEN))
+            pause()
+            continue
+        break
 
 
 def save_menu():
@@ -537,6 +667,16 @@ def save_menu():
                 continue
             stats = default_stats()
             profile = default_profile()
+            append_history(
+                stats,
+                profile,
+                "system",
+                "new_save_created",
+                details={"slot": slot, "initial_cash": INITIAL_CHIPS},
+                before=None,
+                after=state_snapshot(INITIAL_CHIPS, profile),
+                operation_delta=0,
+            )
             auto_save(slot, INITIAL_CHIPS, stats, profile)
             print(colored(f"  新游戏已创建在槽位 {slot}！", C.GREEN))
             pause()
@@ -562,13 +702,23 @@ def save_menu():
             data = saves[slot]
             if data:
                 if data["profile"].get("retired"):
-                    show_career_summary(data["chips"], data["stats"], data["profile"], slot)
+                    career_summary_menu(data["chips"], data["stats"], data["profile"], slot)
                     continue
                 return (data["chips"], data["stats"], data["profile"], slot)
             else:
                 # 空槽位，新建
                 stats = default_stats()
                 profile = default_profile()
+                append_history(
+                    stats,
+                    profile,
+                    "system",
+                    "new_save_created",
+                    details={"slot": slot, "initial_cash": INITIAL_CHIPS},
+                    before=None,
+                    after=state_snapshot(INITIAL_CHIPS, profile),
+                    operation_delta=0,
+                )
                 auto_save(slot, INITIAL_CHIPS, stats, profile)
                 print(colored(f"  新游戏已创建在槽位 {slot}！", C.GREEN))
                 pause()
@@ -742,10 +892,21 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored("  金额无效。", C.RED))
                 pause()
                 continue
+            before = state_snapshot(chips, profile)
             chips -= amount
             profile["bank"] += amount
             stats["bank_deposit_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "deposit",
+                details={"amount": amount},
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  已存入 ${amount}。", C.GREEN))
             for notice in notices:
@@ -771,10 +932,21 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored("  超出可取范围。", C.RED))
                 pause()
                 continue
+            before = state_snapshot(chips, profile)
             chips += amount
             profile["bank"] -= amount
             stats["bank_withdraw_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "withdraw",
+                details={"amount": amount, "limit": max_withdraw},
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  已取出 ${amount}。", C.GREEN))
             for notice in notices:
@@ -790,8 +962,20 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored("  超出允许范围。", C.RED))
                 pause()
                 continue
+            before = state_snapshot(chips, profile)
+            old_ratio = profile.get("bank_ratio", 0.5)
             profile["bank_ratio"] = round(ratio_input, 2)
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "set_ratio",
+                details={"from": old_ratio, "to": profile["bank_ratio"]},
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  安全比率已设置为 {profile['bank_ratio']:.2f}。", C.GREEN))
             for notice in notices:
@@ -816,10 +1000,26 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored("  超出当前档位可借范围。", C.RED))
                 pause()
                 continue
+            before = state_snapshot(chips, profile)
             profile["loans"][tier_index]["balance"] += amount
             chips += amount
             stats["loan_borrowed_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "borrow",
+                details={
+                    "amount": amount,
+                    "tier_index": tier_index,
+                    "tier_name": LOAN_TIERS[tier_index]["name"],
+                    "daily_rate": LOAN_TIERS[tier_index]["daily_rate"],
+                },
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  已从{LOAN_TIERS[tier_index]['name']}借入 ${amount}。", C.GREEN))
             for notice in notices:
@@ -846,6 +1046,7 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored("  金额无效。", C.RED))
                 pause()
                 continue
+            before = state_snapshot(chips, profile)
             chips -= amount
             remaining = amount
             for idx in range(len(LOAN_TIERS) - 1, -1, -1):
@@ -859,6 +1060,16 @@ def bank_menu(chips, slot, stats, profile):
                     break
             stats["loan_repaid_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "repay",
+                details={"amount": amount},
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             auto_save(slot, chips, stats, profile)
             print(colored(f"  已还款 ${amount}。", C.GREEN))
             for notice in notices:
@@ -871,11 +1082,29 @@ def claim_government_aid(chips, slot, stats, profile):
         print(colored("  当前不符合领取补贴的条件。", C.RED))
         pause()
         return chips
+    before = state_snapshot(chips, profile)
     chips += GOVERNMENT_AID_AMOUNT
     profile["government_aid_used"] += 1
     stats["government_aid_taken"] += 1
+    notices = record_operations(chips, stats, profile, 1)
+    append_history(
+        stats,
+        profile,
+        "bank",
+        "government_aid",
+        details={
+            "amount": GOVERNMENT_AID_AMOUNT,
+            "used": profile["government_aid_used"],
+            "remaining": MAX_GOVERNMENT_AID - profile["government_aid_used"],
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=1,
+    )
     auto_save(slot, chips, stats, profile)
     print(colored(f"  政府补贴到账 ${GOVERNMENT_AID_AMOUNT}。第 {profile['government_aid_used']}/{MAX_GOVERNMENT_AID} 次。", C.GREEN))
+    for notice in notices:
+        print(notice)
     pause()
     return chips
 
@@ -920,6 +1149,10 @@ class Card:
             f"│   {colored(r2, c)}│",
             "└─────┘",
         ]
+
+
+def card_text(card):
+    return f"{card.rank}{card.suit}"
 
 def render_cards(cards, label=""):
     """横向排列渲染多张牌"""
@@ -1010,6 +1243,7 @@ def blackjack(chips, slot=None, stats=None, profile=None):
             print(colored("  无效金额！", C.RED))
             pause()
             continue
+        round_before = state_snapshot(chips, profile)
 
         deck = Deck()
         player_hand = {
@@ -1076,6 +1310,25 @@ def blackjack(chips, slot=None, stats=None, profile=None):
                 stats["biggest_win"] = max(stats["biggest_win"], total_delta)
             stats["total_bet"] += total_bet
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "blackjack",
+                "round_resolved",
+                details={
+                    "base_bet": bet,
+                    "insurance_bet": insurance_bet,
+                    "dealer_cards": [card_text(card) for card in dealer],
+                    "dealer_blackjack": True,
+                    "player_cards": [card_text(card) for card in player_hand["cards"]],
+                    "player_blackjack": player_blackjack,
+                    "result": "push" if player_blackjack else "lose",
+                    "delta": total_delta,
+                },
+                before=round_before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
 
             if slot is not None and stats is not None and profile is not None:
                 auto_save(slot, chips, stats, profile)
@@ -1221,6 +1474,33 @@ def blackjack(chips, slot=None, stats=None, profile=None):
         if total_delta > 0:
             stats["biggest_win"] = max(stats["biggest_win"], total_delta)
         notices = record_operations(chips, stats, profile, 1)
+        append_history(
+            stats,
+            profile,
+            "blackjack",
+            "round_resolved",
+            details={
+                "base_bet": bet,
+                "insurance_bet": insurance_bet,
+                "dealer_cards": [card_text(card) for card in dealer],
+                "dealer_value": dv,
+                "delta": total_delta,
+                "hands": [
+                    {
+                        "cards": [card_text(card) for card in hand["cards"]],
+                        "value": hand_value(hand["cards"]),
+                        "bet": hand["bet"],
+                        "split": hand.get("split", False),
+                        "doubled": hand.get("doubled", False),
+                        "surrendered": hand.get("surrendered", False),
+                    }
+                    for hand in hands
+                ],
+            },
+            before=round_before,
+            after=state_snapshot(chips, profile),
+            operation_delta=1,
+        )
 
         if slot is not None and stats is not None and profile is not None:
             auto_save(slot, chips, stats, profile)
@@ -1284,12 +1564,15 @@ def craps(chips, slot=None, stats=None, profile=None):
             print(colored("  无效金额！", C.RED))
             pause()
             continue
+        round_before = state_snapshot(chips, profile)
+        roll_history = []
 
         # Come Out Roll
         print(colored("\n  ── Come Out Roll ──", C.CYAN))
         roll_animation()
         d1, d2 = random.randint(1, 6), random.randint(1, 6)
         total = d1 + d2
+        roll_history.append({"phase": "come_out", "dice": [d1, d2], "total": total})
         render_dice(d1, d2)
         print(colored(f"    总点数: {total}", C.BOLD))
 
@@ -1301,6 +1584,21 @@ def craps(chips, slot=None, stats=None, profile=None):
                 stats["biggest_win"] = max(stats["biggest_win"], bet)
             print(colored(f"\n  ✓ 自然赢！+${bet}", C.GREEN))
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "craps",
+                "round_resolved",
+                details={
+                    "bet": bet,
+                    "result": "natural_win",
+                    "delta": bet,
+                    "rolls": roll_history,
+                },
+                before=round_before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             if slot is not None and stats is not None and profile is not None:
                 auto_save(slot, chips, stats, profile)
                 print(colored("  [自动存档]", C.DIM))
@@ -1315,6 +1613,21 @@ def craps(chips, slot=None, stats=None, profile=None):
                 stats["total_bet"] += bet
             print(colored(f"\n  ✗ Craps！输了 -${bet}", C.RED))
             notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "craps",
+                "round_resolved",
+                details={
+                    "bet": bet,
+                    "result": "craps_lose",
+                    "delta": -bet,
+                    "rolls": roll_history,
+                },
+                before=round_before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
             if slot is not None and stats is not None and profile is not None:
                 auto_save(slot, chips, stats, profile)
                 print(colored("  [自动存档]", C.DIM))
@@ -1324,6 +1637,8 @@ def craps(chips, slot=None, stats=None, profile=None):
             continue
 
         point = total
+        result_label = "point_made"
+        round_delta = bet
         print(colored(f"\n  Point 设为 {point}，继续掷！", C.YELLOW))
         pause("按 Enter 继续掷骰...")
 
@@ -1332,6 +1647,7 @@ def craps(chips, slot=None, stats=None, profile=None):
             roll_animation()
             d1, d2 = random.randint(1, 6), random.randint(1, 6)
             total = d1 + d2
+            roll_history.append({"phase": "point", "dice": [d1, d2], "total": total})
             render_dice(d1, d2)
             print(colored(f"    总点数: {total}  (Point: {point})", C.BOLD))
 
@@ -1349,12 +1665,30 @@ def craps(chips, slot=None, stats=None, profile=None):
                     stats["losses"] += 1
                     stats["total_bet"] += bet
                 print(colored(f"\n  ✗ Seven Out！-${bet}", C.RED))
+                result_label = "seven_out"
+                round_delta = -bet
                 break
             else:
                 print(colored("    继续掷...", C.DIM))
                 pause("按 Enter 继续掷骰...")
 
         notices = record_operations(chips, stats, profile, 1)
+        append_history(
+            stats,
+            profile,
+            "craps",
+            "round_resolved",
+            details={
+                "bet": bet,
+                "point": point,
+                "result": result_label,
+                "delta": round_delta,
+                "rolls": roll_history,
+            },
+            before=round_before,
+            after=state_snapshot(chips, profile),
+            operation_delta=1,
+        )
         if slot is not None and stats is not None and profile is not None:
             auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
@@ -1450,6 +1784,7 @@ def slots(chips, slot=None, stats=None, profile=None):
                 print(colored("  无效金额！", C.RED))
                 pause()
                 continue
+        spin_before = state_snapshot(chips, profile)
 
         if free_mode:
             slot_state["free_spins"] -= 1
@@ -1520,6 +1855,27 @@ def slots(chips, slot=None, stats=None, profile=None):
             slot_state["streak"] = 0
 
         notices = record_operations(chips, stats, profile, 1)
+        append_history(
+            stats,
+            profile,
+            "slots",
+            "spin_resolved",
+            details={
+                "bet": bet,
+                "free_mode": free_mode,
+                "multiplier": multiplier,
+                "symbols": result,
+                "line_multiplier": line_mult,
+                "label": label,
+                "scatter_count": scatter_count,
+                "free_spins_awarded": free_spins_awarded,
+                "free_spins_remaining": slot_state["free_spins"],
+                "delta": winnings if winnings > 0 else (-bet if paid_spin else 0),
+            },
+            before=spin_before,
+            after=state_snapshot(chips, profile),
+            operation_delta=1,
+        )
         if slot is not None and stats is not None and profile is not None:
             auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
@@ -1840,6 +2196,8 @@ def fire_station(chips, slot=None, stats=None, profile=None):
             base_bet = available[ti]
         except ValueError:
             continue
+        hand_before = state_snapshot(chips, profile)
+        hand_action_log = []
 
         # === 开始一手 ===
         deck = Deck(num_decks=1)
@@ -1910,6 +2268,7 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                     current_bet = raise_amt
                     player_raises += 1
                     hand_operations += 1
+                    hand_action_log.append({"turn": round_num, "action": "raise", "amount": raise_amt, "pot_after": pot})
                     last_raiser = "player"
                     turn = "ai"
 
@@ -1931,11 +2290,13 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                         chips -= current_bet
                         pot += current_bet
                     hand_operations += 1
+                    hand_action_log.append({"turn": round_num, "action": "call" if last_raiser == "ai" else "showdown", "amount": current_bet if last_raiser == "ai" else 0, "pot_after": pot})
                     game_over = True
                     winner = "showdown"
 
                 elif action == 'F':
                     hand_operations += 1
+                    hand_action_log.append({"turn": round_num, "action": "fold", "amount": 0, "pot_after": pot})
                     game_over = True
                     winner = "ai_fold"  # 玩家弃牌
 
@@ -2079,6 +2440,33 @@ def fire_station(chips, slot=None, stats=None, profile=None):
                 print(colored(f"  ✓ 你击败了 {defeated['name']}！下一位对手是 {next_opponent['name']}。", C.GREEN))
 
         notices = record_operations(chips, stats, profile, max(1, hand_operations))
+        append_history(
+            stats,
+            profile,
+            "fire_station",
+            "hand_resolved",
+            details={
+                "opponent": {
+                    "name": opponent["name"],
+                    "title": opponent["title"],
+                    "personality": opponent["personality"],
+                    "boss": opponent.get("boss", False),
+                    "cycle": opponent.get("cycle", 0),
+                },
+                "base_bet": base_bet,
+                "player_card": card_text(player_card),
+                "ai_card": card_text(ai_card),
+                "winner": winner,
+                "pot": pot,
+                "player_actions": hand_action_log,
+                "player_raises": player_raises,
+                "ai_raises": ai_raises,
+                "operation_count_for_hand": max(1, hand_operations),
+            },
+            before=hand_before,
+            after=state_snapshot(chips, profile),
+            operation_delta=max(1, hand_operations),
+        )
         if slot is not None and stats is not None and profile is not None:
             auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
@@ -2099,12 +2487,22 @@ def main():
         print(colored("\n  再见！\n", C.YELLOW))
         return
     chips, stats, profile, active_slot = result
+    append_history(
+        stats,
+        profile,
+        "system",
+        "session_opened",
+        details={"slot": active_slot},
+        before=state_snapshot(chips, profile),
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
 
     while True:
         refresh_career_status(chips, stats, profile)
         if profile.get("retired"):
             auto_save(active_slot, chips, stats, profile)
-            show_career_summary(chips, stats, profile, active_slot)
+            career_summary_menu(chips, stats, profile, active_slot)
             break
 
         clear()
@@ -2117,6 +2515,7 @@ def main():
             colored("4", C.GREEN) + "  火烧洋油站",
             "",
             colored("B", C.CYAN) + "  银行",
+            colored("E", C.CYAN) + "  导出复盘数据",
             colored("G", C.YELLOW) + "  领取政府补贴",
             colored("S", C.CYAN) + "  战绩统计",
             colored("0", C.RED) + "  保存并离开",
@@ -2148,11 +2547,29 @@ def main():
             chips = fire_station(chips, active_slot, stats, profile)
         elif choice == 'B':
             chips = bank_menu(chips, active_slot, stats, profile)
+        elif choice == 'E':
+            path = export_review_data(active_slot, chips, stats, profile)
+            auto_save(active_slot, chips, stats, profile)
+            clear()
+            header(chips, active_slot, stats, profile)
+            print(colored("\n  复盘数据已导出。", C.GREEN))
+            print(colored(f"  路径: {path}", C.DIM))
+            pause()
         elif choice == 'G':
             chips = claim_government_aid(chips, active_slot, stats, profile)
         elif choice == 'S':
             show_stats(chips, stats, profile)
         elif choice == '0':
+            append_history(
+                stats,
+                profile,
+                "system",
+                "session_saved_and_exit",
+                details={"slot": active_slot},
+                before=state_snapshot(chips, profile),
+                after=state_snapshot(chips, profile),
+                operation_delta=0,
+            )
             auto_save(active_slot, chips, stats, profile)
             clear()
             print(colored("\n  游戏已保存！感谢光临 Leo's Casino！", C.YELLOW))
@@ -2195,6 +2612,8 @@ def show_stats(chips, stats, profile):
         f"Boss 击败:  {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
         f"已过天数:   {colored(str(profile.get('bank_days_elapsed', 0)), C.WHITE)}",
         f"操作计数:   {colored(str(stats.get('operations_count', 0)), C.WHITE)}",
+        f"历史条目:   {colored(str(len(profile.get('history', []))), C.WHITE)}",
+        f"导出次数:   {colored(str(profile.get('export_count', 0)), C.WHITE)}",
         f"盈亏:       {colored(f'${assets - INITIAL_CHIPS}', C.GREEN if assets >= INITIAL_CHIPS else C.RED)}",
     ]
     print(box(lines, width=46, title="战绩统计", color=C.MAGENTA))
