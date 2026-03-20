@@ -5,155 +5,212 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fire Station Arena</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
     :root {
-      --bg: #15110c;
-      --panel: rgba(29, 22, 17, 0.88);
-      --panel-soft: rgba(45, 34, 24, 0.66);
-      --line: rgba(246, 204, 143, 0.18);
-      --text: #f7edd9;
-      --muted: #c9b58f;
-      --accent: #f29f58;
-      --accent-2: #ffe3a1;
-      --good: #9fd39d;
-      --bad: #f29a8f;
-      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+      --bg: #faf8f5;
+      --panel: #ffffff;
+      --panel-soft: #f5f1eb;
+      --line: #e5ddd0;
+      --text: #2d2a26;
+      --muted: #8a8279;
+      --accent: #bf8b2e;
+      --accent-2: #9a7023;
+      --good: #2e7d32;
+      --bad: #c62828;
+      --shadow: none;
     }
 
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; }
 
     body {
       margin: 0;
       min-height: 100vh;
       color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(242, 159, 88, 0.20), transparent 34%),
-        radial-gradient(circle at top right, rgba(255, 227, 161, 0.10), transparent 28%),
-        linear-gradient(160deg, #120e09 0%, #1c140e 45%, #0c0907 100%);
-      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      font-family: "Source Serif 4", Georgia, "Noto Serif SC", "Songti SC", serif;
+      -webkit-font-smoothing: antialiased;
     }
 
     .shell {
-      width: min(1280px, calc(100% - 32px));
-      margin: 28px auto 44px;
+      width: min(1120px, calc(100% - 48px));
+      margin: 56px auto 80px;
     }
 
+    /* ---- hero ---- */
     .hero {
-      padding: 28px;
-      border: 1px solid var(--line);
-      border-radius: 24px;
-      background: linear-gradient(160deg, rgba(41, 30, 21, 0.92), rgba(20, 15, 11, 0.88));
-      box-shadow: var(--shadow);
+      padding: 0 0 36px;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .eyebrow {
-      letter-spacing: 0.18em;
+      letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: var(--accent-2);
-      font-size: 12px;
+      color: var(--accent);
+      font-size: 11px;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-weight: 500;
     }
 
     h1 {
-      margin: 10px 0 8px;
-      font-size: clamp(30px, 4vw, 54px);
-      line-height: 1.02;
-      font-weight: 750;
+      margin: 14px 0 12px;
+      font-size: clamp(26px, 3.2vw, 40px);
+      line-height: 1.15;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
     }
 
     .subtitle {
       color: var(--muted);
-      max-width: 800px;
-      font-size: 15px;
-      line-height: 1.7;
+      max-width: 680px;
+      font-size: 14.5px;
+      line-height: 1.8;
       margin: 0;
     }
 
+    /* ---- toolbar ---- */
     .toolbar {
       display: grid;
       grid-template-columns: 1.25fr 1fr auto auto;
-      gap: 12px;
+      gap: 8px;
       align-items: center;
-      margin-top: 22px;
+      margin-top: 28px;
     }
 
     .toolbar-secondary {
       display: grid;
-      grid-template-columns: 1.2fr 0.9fr 0.6fr auto;
-      gap: 12px;
+      grid-template-columns: 1fr 0.7fr 0.7fr auto;
+      gap: 8px;
       align-items: center;
-      margin-top: 12px;
+      margin-top: 8px;
     }
 
     input, button, select {
-      border-radius: 14px;
+      border-radius: 4px;
       border: 1px solid var(--line);
-      font: inherit;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 12.5px;
+      transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--accent);
     }
 
     input, select {
       width: 100%;
-      padding: 14px 16px;
-      background: rgba(15, 11, 8, 0.85);
+      padding: 9px 11px;
+      background: var(--panel);
       color: var(--text);
     }
 
     button {
-      padding: 14px 18px;
-      background: linear-gradient(135deg, var(--accent), #e46c36);
-      color: #1f140d;
-      font-weight: 700;
+      padding: 9px 15px;
+      background: var(--text);
+      color: var(--bg);
+      font-weight: 500;
       cursor: pointer;
       white-space: nowrap;
+      transition: opacity 0.15s;
     }
+
+    button:hover { opacity: 0.82; }
 
     .ghost-btn {
-      background: rgba(15, 11, 8, 0.70);
-      color: var(--accent-2);
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
     }
 
+    .ghost-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      opacity: 1;
+    }
+
+    /* ---- status ---- */
+    .empty, .error {
+      margin-top: 20px;
+      padding: 14px 0;
+      border-radius: 0;
+      border: none;
+      border-top: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 13.5px;
+    }
+
+    .error {
+      color: var(--bad);
+    }
+
+    /* ---- meta ---- */
     .meta {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-      gap: 14px;
-      margin-top: 18px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      margin-top: 8px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      overflow: visible;
     }
 
     .card {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: var(--panel);
-      box-shadow: var(--shadow);
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
     }
 
     .meta .card {
-      padding: 16px 18px;
+      padding: 18px 0 18px;
+      border-right: 1px solid var(--line);
+      padding-right: 20px;
+      padding-left: 20px;
     }
+
+    .meta .card:first-child { padding-left: 0; }
+    .meta .card:nth-child(4n) { border-right: none; }
+    .meta .card:nth-child(4n+1) { padding-left: 0; }
 
     .label {
       color: var(--muted);
-      font-size: 12px;
+      font-size: 10.5px;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.06em;
+      font-family: "IBM Plex Mono", Consolas, monospace;
     }
 
     .value {
-      margin-top: 8px;
-      font-size: 26px;
-      font-weight: 720;
+      margin-top: 5px;
+      font-size: 20px;
+      font-weight: 600;
     }
 
+    /* ---- main grid ---- */
     .grid {
       display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
-      gap: 18px;
-      margin-top: 20px;
+      grid-template-columns: 1fr;
+      gap: 0;
+      margin-top: 0;
     }
 
+    /* ---- panels ---- */
     .panel-head {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: baseline;
       gap: 12px;
-      padding: 18px 20px 14px;
+      padding: 28px 0 12px;
       border-bottom: 1px solid var(--line);
       flex-wrap: wrap;
     }
@@ -161,107 +218,120 @@
     .panel-head h2 {
       margin: 0;
       font-size: 20px;
+      font-weight: 600;
     }
 
     .panel-controls {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
     }
 
     .panel-controls select {
-      min-width: 160px;
-      padding: 10px 12px;
+      min-width: 140px;
+      padding: 7px 9px;
     }
 
     .panel-body {
-      padding: 18px 20px 22px;
+      padding: 0;
     }
 
+    /* ---- table ---- */
     table {
       width: 100%;
       border-collapse: collapse;
     }
 
     th, td {
-      padding: 12px 10px;
+      padding: 11px 12px;
       text-align: left;
-      border-bottom: 1px solid rgba(246, 204, 143, 0.10);
-      font-size: 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
       vertical-align: top;
     }
 
+    th:first-child, td:first-child { padding-left: 0; }
+    th:last-child, td:last-child { padding-right: 0; }
+
     th {
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 500;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
 
+    tbody tr:last-child td { border-bottom: none; }
+
     tbody tr:hover {
-      background: rgba(255, 227, 161, 0.03);
+      background: var(--panel-soft);
     }
 
     .positive { color: var(--good); }
     .negative { color: var(--bad); }
 
+    /* ---- pill ---- */
     .pill {
       display: inline-block;
-      padding: 6px 10px;
-      border-radius: 999px;
+      padding: 3px 9px;
+      border-radius: 3px;
       background: var(--panel-soft);
       border: 1px solid var(--line);
       color: var(--accent-2);
-      font-size: 12px;
+      font-size: 11px;
+      font-family: "IBM Plex Mono", Consolas, monospace;
+      font-weight: 500;
     }
 
-    .empty, .error {
-      margin-top: 16px;
-      padding: 18px 20px;
-      border-radius: 16px;
-      border: 1px dashed var(--line);
-      background: rgba(16, 12, 9, 0.55);
-      color: var(--muted);
-      line-height: 1.7;
-    }
-
-    .error {
-      color: var(--bad);
-      border-style: solid;
-    }
-
+    /* ---- matches ---- */
     .match-grid {
       display: grid;
-      gap: 12px;
-      max-height: 920px;
-      overflow: auto;
-      padding-right: 4px;
+      gap: 0;
+      max-height: none;
+      overflow: visible;
+      padding-right: 0;
     }
 
     .match-item {
-      padding: 14px 16px;
-      border-radius: 16px;
-      background: var(--panel-soft);
-      border: 1px solid rgba(246, 204, 143, 0.10);
+      padding: 14px 0;
+      border-radius: 0;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--line);
     }
+
+    .match-item:last-child { border-bottom: none; }
 
     .match-title {
       display: flex;
       justify-content: space-between;
       gap: 12px;
       flex-wrap: wrap;
-      margin-bottom: 8px;
+      margin-bottom: 5px;
     }
 
     .mono {
-      font-family: Consolas, "SFMono-Regular", monospace;
+      font-family: "IBM Plex Mono", Consolas, "SFMono-Regular", monospace;
+      font-size: 12.5px;
     }
 
-    @media (max-width: 1080px) {
+    ::selection {
+      background: rgba(191, 139, 46, 0.2);
+    }
+
+    @media (max-width: 860px) {
       .toolbar,
-      .toolbar-secondary,
-      .grid {
+      .toolbar-secondary {
         grid-template-columns: 1fr;
       }
+      .meta {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .meta .card:nth-child(2n) { border-right: none; }
+      .meta .card:nth-child(2n+1) { padding-left: 0; }
+      .meta .card:nth-child(n+3) { border-top: 1px solid var(--line); }
     }
   </style>
 </head>
@@ -270,14 +340,14 @@
     <section class="hero">
       <div class="eyebrow">Fire Station Arena</div>
       <h1>模型两两对打排行榜</h1>
-      <p class="subtitle">页面会优先读取 `fire_station_ai/runs/arena_index.json`，让你直接从已有 Arena 结果里切换查看；也保留手动输入 `arena.json` 路径。你还可以按 Elo、积分、EV、手胜率等维度自定义排序。</p>
+      <p class="subtitle">从已有 Arena 结果中选择查看，或手动输入 arena.json 路径。支持按 Elo、积分、EV、手胜率等维度排序。</p>
 
       <div class="toolbar">
         <select id="arena-select">
           <option value="">从已有 Arena 列表中选择</option>
         </select>
         <input id="json-path" type="text" placeholder="例如：runs/arena_seed7_models15/arena.json">
-        <button id="load-btn" type="button">读取 Arena</button>
+        <button id="load-btn" type="button">读取</button>
         <button id="refresh-index-btn" class="ghost-btn" type="button">刷新列表</button>
       </div>
 
