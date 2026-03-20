@@ -33,7 +33,7 @@
     }
 
     .shell {
-      width: min(1180px, calc(100% - 32px));
+      width: min(1280px, calc(100% - 32px));
       margin: 28px auto 44px;
     }
 
@@ -61,29 +61,36 @@
 
     .subtitle {
       color: var(--muted);
-      max-width: 760px;
+      max-width: 800px;
       font-size: 15px;
       line-height: 1.7;
       margin: 0;
     }
 
     .toolbar {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1.25fr 1fr auto auto;
       gap: 12px;
       align-items: center;
-      flex-wrap: wrap;
       margin-top: 22px;
     }
 
-    input, button {
+    .toolbar-secondary {
+      display: grid;
+      grid-template-columns: 1.2fr 0.9fr 0.6fr auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    input, button, select {
       border-radius: 14px;
       border: 1px solid var(--line);
       font: inherit;
     }
 
-    input {
-      flex: 1 1 420px;
-      min-width: 220px;
+    input, select {
+      width: 100%;
       padding: 14px 16px;
       background: rgba(15, 11, 8, 0.85);
       color: var(--text);
@@ -95,6 +102,12 @@
       color: #1f140d;
       font-weight: 700;
       cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .ghost-btn {
+      background: rgba(15, 11, 8, 0.70);
+      color: var(--accent-2);
     }
 
     .meta {
@@ -130,7 +143,7 @@
 
     .grid {
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      grid-template-columns: 1.15fr 0.85fr;
       gap: 18px;
       margin-top: 20px;
     }
@@ -142,11 +155,24 @@
       gap: 12px;
       padding: 18px 20px 14px;
       border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
     }
 
     .panel-head h2 {
       margin: 0;
       font-size: 20px;
+    }
+
+    .panel-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .panel-controls select {
+      min-width: 160px;
+      padding: 10px 12px;
     }
 
     .panel-body {
@@ -206,6 +232,9 @@
     .match-grid {
       display: grid;
       gap: 12px;
+      max-height: 920px;
+      overflow: auto;
+      padding-right: 4px;
     }
 
     .match-item {
@@ -227,7 +256,9 @@
       font-family: Consolas, "SFMono-Regular", monospace;
     }
 
-    @media (max-width: 960px) {
+    @media (max-width: 1080px) {
+      .toolbar,
+      .toolbar-secondary,
       .grid {
         grid-template-columns: 1fr;
       }
@@ -239,11 +270,40 @@
     <section class="hero">
       <div class="eyebrow">Fire Station Arena</div>
       <h1>模型两两对打排行榜</h1>
-      <p class="subtitle">把 `python -m fire_station_ai.arena` 生成的 `arena.json` 路径填进来，页面会读取 JSON 并展示排行榜、对打结果和基础配置。你也可以通过 URL 传参：`?json=fire_station_ai/runs/arena_seed7_models4/arena.json`。</p>
+      <p class="subtitle">页面会优先读取 `fire_station_ai/runs/arena_index.json`，让你直接从已有 Arena 结果里切换查看；也保留手动输入 `arena.json` 路径。你还可以按 Elo、积分、EV、手胜率等维度自定义排序。</p>
+
       <div class="toolbar">
-        <input id="json-path" type="text" placeholder="例如：fire_station_ai/runs/arena_seed7_models4/arena.json">
+        <select id="arena-select">
+          <option value="">从已有 Arena 列表中选择</option>
+        </select>
+        <input id="json-path" type="text" placeholder="例如：runs/arena_seed7_models15/arena.json">
         <button id="load-btn" type="button">读取 Arena</button>
+        <button id="refresh-index-btn" class="ghost-btn" type="button">刷新列表</button>
       </div>
+
+      <div class="toolbar-secondary">
+        <select id="standings-sort">
+          <option value="rank">按默认排名</option>
+          <option value="elo">按 Elo</option>
+          <option value="match_points">按积分</option>
+          <option value="ev_per_hand">按 EV/手</option>
+          <option value="hand_win_rate">按手胜率</option>
+          <option value="bankroll_delta">按总盈利</option>
+          <option value="codename">按模型名</option>
+        </select>
+        <select id="sort-direction">
+          <option value="desc">降序</option>
+          <option value="asc">升序</option>
+        </select>
+        <select id="match-sort">
+          <option value="input">对打按原顺序</option>
+          <option value="elo_gap">对打按 Elo 差</option>
+          <option value="ev_gap">对打按 EV 差</option>
+          <option value="name">对打按名称</option>
+        </select>
+        <div class="pill" id="index-count">0 个 Arena</div>
+      </div>
+
       <div id="status" class="empty">等待载入 Arena JSON。</div>
       <div id="meta" class="meta" hidden></div>
     </section>
@@ -252,14 +312,17 @@
       <article class="card">
         <div class="panel-head">
           <h2>排行榜</h2>
-          <span class="pill" id="standings-count">0 名模型</span>
+          <div class="panel-controls">
+            <span class="pill" id="standings-count">0 名模型</span>
+          </div>
         </div>
         <div class="panel-body">
           <table>
             <thead>
               <tr>
-                <th>排名</th>
+                <th>名次</th>
                 <th>模型</th>
+                <th>Elo</th>
                 <th>积分</th>
                 <th>EV/手</th>
                 <th>手胜率</th>
@@ -274,7 +337,9 @@
       <article class="card">
         <div class="panel-head">
           <h2>对打明细</h2>
-          <span class="pill" id="match-count">0 场</span>
+          <div class="panel-controls">
+            <span class="pill" id="match-count">0 场</span>
+          </div>
         </div>
         <div class="panel-body">
           <div id="matches" class="match-grid"></div>
@@ -284,14 +349,24 @@
   </div>
 
   <script>
+    const ARENA_INDEX_PATH = "runs/arena_index.json";
+
     const statusEl = document.getElementById("status");
     const metaEl = document.getElementById("meta");
     const contentEl = document.getElementById("content");
     const inputEl = document.getElementById("json-path");
+    const arenaSelectEl = document.getElementById("arena-select");
+    const standingsSortEl = document.getElementById("standings-sort");
+    const sortDirectionEl = document.getElementById("sort-direction");
+    const matchSortEl = document.getElementById("match-sort");
+    const indexCountEl = document.getElementById("index-count");
     const standingsBodyEl = document.getElementById("standings-body");
     const matchesEl = document.getElementById("matches");
     const standingsCountEl = document.getElementById("standings-count");
     const matchCountEl = document.getElementById("match-count");
+
+    let currentSummary = null;
+    let currentArenaIndex = [];
 
     function formatSigned(value, digits = 3) {
       const fixed = Number(value || 0).toFixed(digits);
@@ -304,7 +379,12 @@
       return "";
     }
 
+    function toPercent(value) {
+      return `${(Number(value || 0) * 100).toFixed(1)}%`;
+    }
+
     function renderMeta(summary) {
+      const leader = (summary.standings || [])[0] || {};
       const cards = [
         ["生成时间", summary.generated_at || "-"],
         ["模型数量", `${summary.model_count || 0}`],
@@ -312,6 +392,8 @@
         ["底注集合", (summary.config?.bet_set || []).join(", ") || "-"],
         ["筹码集合", (summary.config?.stack_set || []).join(", ") || "-"],
         ["每组计划手数", `${summary.config?.hands || 0}`],
+        ["当前榜首", leader.codename || "-"],
+        ["榜首 Elo", leader.elo ? `${Number(leader.elo).toFixed(1)}` : "-"],
       ];
       metaEl.innerHTML = cards.map(([label, value]) => `
         <div class="card">
@@ -322,26 +404,72 @@
       metaEl.hidden = false;
     }
 
+    function compareValues(a, b, field, direction) {
+      const asc = direction === "asc" ? 1 : -1;
+      const valueA = a[field];
+      const valueB = b[field];
+      if (field === "codename") {
+        return String(valueA || "").localeCompare(String(valueB || ""), "zh-Hans-CN") * asc;
+      }
+      return ((Number(valueA || 0) - Number(valueB || 0)) || 0) * asc;
+    }
+
+    function sortedStandings(summary) {
+      const standings = [...(summary.standings || [])];
+      const field = standingsSortEl.value;
+      const direction = sortDirectionEl.value;
+      if (field === "rank") {
+        standings.sort((a, b) => compareValues(a, b, "rank", direction));
+      } else {
+        standings.sort((a, b) => {
+          const primary = compareValues(a, b, field, direction);
+          if (primary !== 0) return primary;
+          return compareValues(a, b, "rank", "asc");
+        });
+      }
+      return standings;
+    }
+
     function renderStandings(summary) {
-      const standings = summary.standings || [];
+      const standings = sortedStandings(summary);
       standingsCountEl.textContent = `${standings.length} 名模型`;
-      standingsBodyEl.innerHTML = standings.map((row) => `
+      standingsBodyEl.innerHTML = standings.map((row, index) => `
         <tr>
-          <td class="mono">#${row.rank}</td>
+          <td class="mono">#${index + 1}<div class="label">原榜 #${row.rank}</div></td>
           <td>
             <div>${row.codename}</div>
             <div class="label">${row.policy_type} · ${row.run_name || ""}</div>
           </td>
+          <td class="mono">${Number(row.elo || 0).toFixed(1)}<div class="label">Elo 榜 #${row.elo_rank || "-"}</div></td>
           <td class="mono">${row.match_points}</td>
           <td class="mono ${classForSigned(row.ev_per_hand)}">${formatSigned(row.ev_per_hand)}</td>
-          <td class="mono">${(Number(row.hand_win_rate || 0) * 100).toFixed(1)}%</td>
+          <td class="mono">${toPercent(row.hand_win_rate)}</td>
           <td class="mono">${row.match_wins}W ${row.match_losses}L ${row.match_draws}D</td>
         </tr>
       `).join("");
     }
 
+    function sortedMatches(summary) {
+      const matches = [...(summary.matches || [])];
+      const sortMode = matchSortEl.value;
+      const standingsMap = new Map((summary.standings || []).map((row) => [row.id, row]));
+      if (sortMode === "elo_gap") {
+        matches.sort((a, b) => {
+          const gapA = Math.abs((standingsMap.get(a.model_a_id)?.elo || 0) - (standingsMap.get(a.model_b_id)?.elo || 0));
+          const gapB = Math.abs((standingsMap.get(b.model_a_id)?.elo || 0) - (standingsMap.get(b.model_b_id)?.elo || 0));
+          return gapB - gapA;
+        });
+      } else if (sortMode === "ev_gap") {
+        matches.sort((a, b) => Math.abs(Number(b.score_a || 0)) - Math.abs(Number(a.score_a || 0)));
+      } else if (sortMode === "name") {
+        matches.sort((a, b) => `${a.model_a_codename}-${a.model_b_codename}`.localeCompare(`${b.model_a_codename}-${b.model_b_codename}`, "zh-Hans-CN"));
+      }
+      return matches;
+    }
+
     function renderMatches(summary) {
-      const matches = summary.matches || [];
+      const standingsMap = new Map((summary.standings || []).map((row) => [row.id, row]));
+      const matches = sortedMatches(summary);
       matchCountEl.textContent = `${matches.length} 场`;
       matchesEl.innerHTML = matches.map((match) => {
         const winnerText = match.winner === "a"
@@ -349,6 +477,8 @@
           : match.winner === "b"
             ? `${match.model_b_codename} 胜`
             : "平局";
+        const eloA = standingsMap.get(match.model_a_id)?.elo;
+        const eloB = standingsMap.get(match.model_b_id)?.elo;
         return `
           <div class="match-item">
             <div class="match-title">
@@ -357,16 +487,51 @@
             </div>
             <div class="mono ${classForSigned(match.score_a)}">${match.model_a_codename}: ${formatSigned(match.score_a)} EV/手</div>
             <div class="mono ${classForSigned(match.score_b)}">${match.model_b_codename}: ${formatSigned(match.score_b)} EV/手</div>
-            <div class="label">手级战绩 ${match.wins_a}W ${match.losses_a}L ${match.ties}T / 计划 ${match.scheduled_hands} 手 / 实打 ${match.actual_hands_played} 手</div>
+            <div class="label">Elo ${eloA ? Number(eloA).toFixed(1) : "-"} vs ${eloB ? Number(eloB).toFixed(1) : "-"} / 手级战绩 ${match.wins_a}W ${match.losses_a}L ${match.ties}T / 计划 ${match.scheduled_hands} 手 / 实打 ${match.actual_hands_played} 手</div>
           </div>
         `;
       }).join("");
     }
 
+    function rerender() {
+      if (!currentSummary) return;
+      renderMeta(currentSummary);
+      renderStandings(currentSummary);
+      renderMatches(currentSummary);
+    }
+
+    function renderArenaIndex(indexPayload) {
+      const arenas = indexPayload?.arenas || [];
+      currentArenaIndex = arenas;
+      indexCountEl.textContent = `${arenas.length} 个 Arena`;
+      arenaSelectEl.innerHTML = `<option value="">从已有 Arena 列表中选择</option>` + arenas.map((item) => `
+        <option value="${item.path}">
+          ${item.run_name} · 榜首 ${item.leader_codename || "-"} · Elo ${item.leader_elo ?? "-"} · ${item.model_count} 模型
+        </option>
+      `).join("");
+    }
+
+    async function loadArenaIndex() {
+      try {
+        const response = await fetch(ARENA_INDEX_PATH, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const indexPayload = await response.json();
+        renderArenaIndex(indexPayload);
+        return indexPayload;
+      } catch (error) {
+        currentArenaIndex = [];
+        arenaSelectEl.innerHTML = `<option value="">没有可用的 Arena 索引</option>`;
+        indexCountEl.textContent = "0 个 Arena";
+        return null;
+      }
+    }
+
     async function loadArena(path) {
       if (!path) {
         statusEl.className = "empty";
-        statusEl.textContent = "请输入 arena.json 路径。";
+        statusEl.textContent = "请输入 arena.json 路径，或从上方列表选择。";
         return;
       }
       statusEl.className = "empty";
@@ -379,29 +544,61 @@
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const summary = await response.json();
-        renderMeta(summary);
-        renderStandings(summary);
-        renderMatches(summary);
+        currentSummary = await response.json();
+        inputEl.value = path;
+        const matched = currentArenaIndex.find((item) => item.path === path);
+        if (matched) {
+          arenaSelectEl.value = matched.path;
+        }
+        rerender();
         statusEl.className = "empty";
         statusEl.textContent = `已读取：${path}`;
         contentEl.hidden = false;
       } catch (error) {
+        currentSummary = null;
         statusEl.className = "error";
         statusEl.textContent = `读取失败：${error.message}`;
       }
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const initialPath = params.get("json") || "";
-    if (initialPath) {
-      inputEl.value = initialPath;
-      loadArena(initialPath);
+    async function boot() {
+      const params = new URLSearchParams(window.location.search);
+      const initialPath = params.get("json") || "";
+      const indexPayload = await loadArenaIndex();
+      if (initialPath) {
+        await loadArena(initialPath);
+        return;
+      }
+      const firstArena = indexPayload?.arenas?.[0];
+      if (firstArena?.path) {
+        arenaSelectEl.value = firstArena.path;
+        await loadArena(firstArena.path);
+      }
     }
 
     document.getElementById("load-btn").addEventListener("click", () => {
       loadArena(inputEl.value.trim());
     });
+
+    document.getElementById("refresh-index-btn").addEventListener("click", async () => {
+      const indexPayload = await loadArenaIndex();
+      if (!inputEl.value.trim() && indexPayload?.arenas?.[0]?.path) {
+        arenaSelectEl.value = indexPayload.arenas[0].path;
+      }
+    });
+
+    arenaSelectEl.addEventListener("change", () => {
+      const path = arenaSelectEl.value.trim();
+      if (path) {
+        loadArena(path);
+      }
+    });
+
+    standingsSortEl.addEventListener("change", rerender);
+    sortDirectionEl.addEventListener("change", rerender);
+    matchSortEl.addEventListener("change", rerender);
+
+    boot();
   </script>
 </body>
 </html>

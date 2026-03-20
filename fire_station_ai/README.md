@@ -194,11 +194,14 @@ python -m fire_station_ai.arena --models 暗牌,皇家,弃牌
 Arena 跑完后会生成：
 
 - `fire_station_ai/runs/arena_.../arena.json`
+- `fire_station_ai/runs/arena_index.json`
+  供 `arena_viewer.html` 自动列出已有 Arena 结果。
 
 静态查看页：
 
 - 打开 [arena_viewer.html](/d:/Desktop/BoringGame/fire_station_ai/arena_viewer.html)
 - 或在浏览器访问 `fire_station_ai/arena_viewer.html?json=fire_station_ai/runs/arena_xxx/arena.json`
+- 页面里可以直接切换已有 Arena，并按 Elo、积分、EV、手胜率等字段重新排序。
 
 ## 验证命令
 

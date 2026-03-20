@@ -14,6 +14,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from .runtime import discover_saved_policies, load_saved_policy
 from .selfplay import run_match
 
+ARENA_INDEX_FILENAME = "arena_index.json"
+
 
 @dataclass
 class ArenaConfig:
@@ -171,8 +173,33 @@ def _run_arena_matchup(task: Dict[str, Any]) -> Dict[str, Any]:
         "losses_a": losses_a,
         "ties": ties,
         "winner": winner,
+        "actual_score_a": ((wins_a + 0.5 * ties) / max(wins_a + losses_a + ties, 1)),
+        "actual_score_b": ((losses_a + 0.5 * ties) / max(wins_a + losses_a + ties, 1)),
         "seat_breakdown": seat_breakdown,
     }
+
+
+def _apply_elo(
+    standings: Dict[str, Dict[str, Any]],
+    matches: Sequence[Dict[str, Any]],
+    *,
+    base_rating: float = 1500.0,
+    k_factor: float = 24.0,
+) -> None:
+    for row in standings.values():
+        row["elo"] = float(base_rating)
+
+    for match in matches:
+        a = standings[match["model_a_id"]]
+        b = standings[match["model_b_id"]]
+        rating_a = float(a["elo"])
+        rating_b = float(b["elo"])
+        expected_a = 1.0 / (1.0 + 10 ** ((rating_b - rating_a) / 400.0))
+        expected_b = 1.0 - expected_a
+        actual_a = float(match.get("actual_score_a", 0.5))
+        actual_b = float(match.get("actual_score_b", 0.5))
+        a["elo"] = rating_a + k_factor * (actual_a - expected_a)
+        b["elo"] = rating_b + k_factor * (actual_b - expected_b)
 
 
 def _build_standings(models: Sequence[Dict[str, Any]], matches: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -234,9 +261,11 @@ def _build_standings(models: Sequence[Dict[str, Any]], matches: Sequence[Dict[st
         hand_total = row["hand_wins"] + row["hand_losses"] + row["hand_ties"]
         row["hand_win_rate"] = row["hand_wins"] / max(hand_total, 1)
 
+    _apply_elo(standings, matches)
     table.sort(
         key=lambda item: (
             item["match_points"],
+            item["elo"],
             item["ev_per_hand"],
             item["hand_win_rate"],
             item["bankroll_delta"],
@@ -245,7 +274,73 @@ def _build_standings(models: Sequence[Dict[str, Any]], matches: Sequence[Dict[st
     )
     for index, row in enumerate(table, start=1):
         row["rank"] = index
+    elo_sorted = sorted(table, key=lambda item: item["elo"], reverse=True)
+    for index, row in enumerate(elo_sorted, start=1):
+        row["elo_rank"] = index
     return table
+
+
+def _build_arena_index_entry(run_dir: Path, summary: Dict[str, Any], *, viewer_root: Path) -> Dict[str, Any]:
+    standings = summary.get("standings", [])
+    leader = standings[0] if standings else {}
+    summary_path = run_dir / "arena.json"
+    try:
+        relative_path = summary_path.relative_to(viewer_root).as_posix()
+    except ValueError:
+        relative_path = summary_path.as_posix()
+    return {
+        "run_name": run_dir.name,
+        "path": relative_path,
+        "generated_at": summary.get("generated_at", ""),
+        "model_count": int(summary.get("model_count", 0)),
+        "match_count": int(summary.get("match_count", 0)),
+        "leader_codename": leader.get("codename", ""),
+        "leader_run_name": leader.get("run_name", ""),
+        "leader_elo": round(float(leader.get("elo", 0.0)), 3),
+        "leader_ev_per_hand": round(float(leader.get("ev_per_hand", 0.0)), 6),
+        "seed": int(summary.get("config", {}).get("seed", 0)),
+    }
+
+
+def rebuild_arena_index(output_dir: str) -> List[Dict[str, Any]]:
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    viewer_root = root.parent
+    entries: List[Dict[str, Any]] = []
+    for candidate in root.iterdir():
+        if not candidate.is_dir() or not candidate.name.startswith("arena_"):
+            continue
+        summary_path = candidate / "arena.json"
+        if not summary_path.exists():
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if summary.get("models") and summary.get("matches"):
+            standings = summary.get("standings") or []
+            if not standings or any("elo" not in row for row in standings):
+                summary["standings"] = _build_standings(summary["models"], summary["matches"])
+                try:
+                    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+                except OSError:
+                    pass
+        entry = _build_arena_index_entry(candidate, summary, viewer_root=viewer_root)
+        entry["sort_key"] = str(entry.get("generated_at") or "")
+        entry["modified_time"] = summary_path.stat().st_mtime
+        entries.append(entry)
+
+    entries.sort(key=lambda item: (item["sort_key"], item["modified_time"]), reverse=True)
+    for entry in entries:
+        entry.pop("modified_time", None)
+        entry.pop("sort_key", None)
+
+    index_payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "arenas": entries,
+    }
+    (root / ARENA_INDEX_FILENAME).write_text(json.dumps(index_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return entries
 
 
 def _write_arena_artifacts(summary: Dict[str, Any], output_dir: str, seed: int, model_count: int) -> Path:
@@ -258,6 +353,7 @@ def _write_arena_artifacts(summary: Dict[str, Any], output_dir: str, seed: int, 
         run_dir = root / f"arena_seed{seed}_models{model_count}_{suffix}"
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "arena.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    rebuild_arena_index(str(root))
     return run_dir
 
 
@@ -368,6 +464,7 @@ def main() -> None:
     for row in standings:
         print(
             f"#{row['rank']:>2}  {row['codename']:<12}  "
+            f"Elo {row['elo']:>7.1f}  "
             f"积分 {row['match_points']:<2}  "
             f"EV/手 {row['ev_per_hand']:>7.3f}  "
             f"手胜率 {row['hand_win_rate'] * 100:>5.1f}%  "
