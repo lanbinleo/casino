@@ -18,6 +18,8 @@
   让保存模型两两对打并导出排行榜 JSON。
 - `arena_viewer.html`
   静态 Arena 看板，直接读取 `arena.json`。
+- `batch_train.py`
+  批量训练入口，可按参数组合批量生成模型。
 - `runtime.py`
   读取保存模型，并把动作桥接回 `casino.py`。
 - `naming.py`
@@ -43,6 +45,12 @@ Arena 排行榜：
 
 ```bash
 python -m fire_station_ai.arena --top 6
+```
+
+批量训练：
+
+```bash
+python -m fire_station_ai.batch_train --profile mini --seeds 18,42
 ```
 
 快速试跑：
@@ -202,6 +210,42 @@ Arena 跑完后会生成：
 - 打开 [arena_viewer.html](/d:/Desktop/BoringGame/fire_station_ai/arena_viewer.html)
 - 或在浏览器访问 `fire_station_ai/arena_viewer.html?json=fire_station_ai/runs/arena_xxx/arena.json`
 - 页面里可以直接切换已有 Arena，并按 Elo、积分、EV、手胜率等字段重新排序。
+
+## 批量训练
+
+默认会对每组参数分别跑两个 seed：
+
+- `18`
+- `42`
+
+直接运行：
+
+```bash
+python -m fire_station_ai.batch_train --profile mini --seeds 18,42
+```
+
+如果你想先把现有 `runs/` 归档掉再开新一批：
+
+```bash
+python -m fire_station_ai.batch_train --profile mini --seeds 18,42 --archive-existing
+```
+
+当前支持的批次档位：
+
+- `mini`
+  较快，适合先跑一轮看结果。
+- `standard`
+  组合更多，时间更长。
+
+批量脚本会：
+
+- 把批次清单写到 `fire_station_ai/runs/batch_.../manifest.json`
+- 把逐项结果写到 `results.json`
+- 把最终摘要写到 `summary.json`
+
+归档时会把旧结果移到：
+
+- `fire_station_ai/run_archives/archive_...`
 
 ## 验证命令
 
