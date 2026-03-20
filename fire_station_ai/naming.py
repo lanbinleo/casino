@@ -5,9 +5,6 @@ from __future__ import annotations
 import random
 from typing import Iterable, Optional, Set
 
-
-import random
-
 # 前缀 —— 2~3字，状态/形容类
 ADJECTIVES = [
     "皇家",    # Royal
@@ -73,18 +70,10 @@ NOUNS = [
 ]
 
 def generate_codename(rng: Optional[random.Random] = None, used: Optional[Iterable[str]] = None) -> str:
-    rng = rng or random.Random()
-    used_set: Set[str] = set(used or [])
-    pool_size = len(ADJECTIVES) * len(NOUNS)
-
-    for _ in range(min(256, pool_size * 2)):
-        name = f"{rng.choice(ADJECTIVES)}{rng.choice(NOUNS)}"
-        if name not in used_set:
-            return name
-
-    suffix = 2
+    if rng is None:
+        rng = random.Random()
+    used_set: Set[str] = set(used) if used is not None else set()
     while True:
-        name = f"{rng.choice(ADJECTIVES)}{rng.choice(NOUNS)}{suffix}"
-        if name not in used_set:
-            return name
-        suffix += 1
+        codename = rng.choice(ADJECTIVES) + rng.choice(NOUNS)
+        if codename not in used_set:
+            return codename
