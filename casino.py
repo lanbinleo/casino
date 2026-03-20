@@ -1,18 +1,386 @@
 #!/usr/bin/env python3
 """Leo's Casino - 终端小赌场"""
 
-import random
-import os
-import time
-import sys
 import json
+import os
+import random
+import sys
+import time
 from datetime import datetime
 
 # ============================================================
 # 存档系统
 # ============================================================
+GAME_VERSION = "v1.1.0"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 MAX_SLOTS = 5
+INITIAL_CHIPS = 1000
+MAX_GOVERNMENT_AID = 3
+GOVERNMENT_AID_AMOUNT = 200
+MIN_BANK_RATIO = 0.0
+MAX_BANK_RATIO = 1.0
+DAILY_OPERATION_COUNT = 20
+MIN_LOAN_AMOUNT = 3000
+BANK_DAILY_INTEREST = 0.0012
+LOAN_TIERS = [
+    {"name": "一档", "daily_rate": 0.0035},
+    {"name": "二档", "daily_rate": 0.0055},
+    {"name": "三档", "daily_rate": 0.0080},
+]
+
+
+def now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def default_stats():
+    return {
+        "wins": 0,
+        "losses": 0,
+        "pushes": 0,
+        "blackjacks": 0,
+        "total_bet": 0,
+        "biggest_win": 0,
+        "bank_deposit_total": 0,
+        "bank_withdraw_total": 0,
+        "bank_interest_earned": 0,
+        "loan_borrowed_total": 0,
+        "loan_repaid_total": 0,
+        "loan_interest_paid": 0,
+        "government_aid_taken": 0,
+        "bosses_defeated": 0,
+        "operations_count": 0,
+    }
+
+
+def default_player_profile():
+    return {
+        "total_hands": 0,
+        "fold_count": 0,
+        "bluff_caught": 0,
+        "raise_freq": [],
+        "showdown_cards": [],
+    }
+
+
+FIRE_STATION_OPPONENTS = [
+    {
+        "name": "阿炳",
+        "title": "街头老千",
+        "personality": "tight",
+        "chips": 700,
+        "mood": 0.40,
+        "quote": "看清楚再下注，小牌桌也能让人输得发抖。",
+    },
+    {
+        "name": "红桃K",
+        "title": "夜班赌徒",
+        "personality": "loose",
+        "chips": 900,
+        "mood": 0.55,
+        "quote": "不敢跟的人，通常已经输了半手。",
+    },
+    {
+        "name": "鬼手七",
+        "title": "偷鸡大师",
+        "personality": "tricky",
+        "chips": 1150,
+        "mood": 0.65,
+        "quote": "你的习惯，我两手牌就能记住。",
+    },
+    {
+        "name": "白鲸",
+        "title": "高压庄家",
+        "personality": "tight",
+        "chips": 1400,
+        "mood": 0.35,
+        "quote": "底池越大，犹豫的代价越高。",
+    },
+    {
+        "name": "维克多",
+        "title": "终局庄家",
+        "personality": "tricky",
+        "chips": 1800,
+        "mood": 0.70,
+        "quote": "Leo 把最后一桌留给了我。你撑得到现在，值得尊重。",
+        "boss": True,
+    },
+]
+
+
+def default_fire_station_state():
+    opener = FIRE_STATION_OPPONENTS[0]
+    return {
+        "stage": 0,
+        "cycle": 0,
+        "ai_chips": opener["chips"],
+        "mood": opener["mood"],
+        "personality": opener["personality"],
+        "player_profile": default_player_profile(),
+    }
+
+
+def default_profile():
+    return {
+        "bank": 0,
+        "bank_ratio": 0.5,
+        "loans": [{"balance": 0} for _ in LOAN_TIERS],
+        "operation_count": 0,
+        "bank_days_elapsed": 0,
+        "government_aid_used": 0,
+        "retired": False,
+        "retire_reason": "",
+        "retired_at": "",
+        "created_at": now_str(),
+        "career_high_assets": INITIAL_CHIPS,
+        "slots": {
+            "free_spins": 0,
+            "free_spin_bet": 0,
+            "streak": 0,
+        },
+        "fire_station": default_fire_station_state(),
+    }
+
+
+def normalize_stats(stats):
+    base = default_stats()
+    if isinstance(stats, dict):
+        for key, value in stats.items():
+            base[key] = value
+    return base
+
+
+def normalize_player_profile(profile):
+    base = default_player_profile()
+    if isinstance(profile, dict):
+        for key, value in profile.items():
+            if key == "raise_freq" and isinstance(value, list):
+                base[key] = value[-20:]
+            elif key == "showdown_cards" and isinstance(value, list):
+                base[key] = value[-20:]
+            else:
+                base[key] = value
+    return base
+
+
+def normalize_loans(loans):
+    base = [{"balance": 0} for _ in LOAN_TIERS]
+    if isinstance(loans, list):
+        for idx, loan in enumerate(loans[:len(LOAN_TIERS)]):
+            if isinstance(loan, dict):
+                base[idx]["balance"] = max(0, safe_int(loan.get("balance", 0), 0))
+            else:
+                base[idx]["balance"] = max(0, safe_int(loan, 0))
+    return base
+
+
+def current_fire_opponent(fire_state):
+    cycle = max(0, fire_state.get("cycle", 0))
+    stage = fire_state.get("stage", 0) % len(FIRE_STATION_OPPONENTS)
+    base = dict(FIRE_STATION_OPPONENTS[stage])
+    bonus = cycle * 150
+    if base.get("boss"):
+        bonus += cycle * 100
+    base["chips"] += bonus
+    base["cycle"] = cycle
+    return base
+
+
+def normalize_fire_station_state(state):
+    base = default_fire_station_state()
+    if isinstance(state, dict):
+        for key, value in state.items():
+            if key == "player_profile":
+                base[key] = normalize_player_profile(value)
+            else:
+                base[key] = value
+    opponent = current_fire_opponent(base)
+    base["personality"] = opponent["personality"]
+    if base.get("ai_chips", 0) <= 0:
+        base["ai_chips"] = opponent["chips"]
+    return base
+
+
+def normalize_profile(profile):
+    base = default_profile()
+    if isinstance(profile, dict):
+        for key, value in profile.items():
+            if key == "slots" and isinstance(value, dict):
+                base["slots"].update(value)
+            elif key == "fire_station":
+                base["fire_station"] = normalize_fire_station_state(value)
+            elif key == "loans":
+                base["loans"] = normalize_loans(value)
+            else:
+                base[key] = value
+    base["bank_ratio"] = min(MAX_BANK_RATIO, max(MIN_BANK_RATIO, safe_float(base.get("bank_ratio", 0.5), 0.5)))
+    base["bank"] = max(0, safe_int(base.get("bank", 0), 0))
+    base["operation_count"] = max(0, safe_int(base.get("operation_count", 0), 0))
+    base["bank_days_elapsed"] = max(0, safe_int(base.get("bank_days_elapsed", 0), 0))
+    base["government_aid_used"] = max(0, min(MAX_GOVERNMENT_AID, safe_int(base.get("government_aid_used", 0), 0)))
+    base["slots"]["free_spins"] = max(0, safe_int(base["slots"].get("free_spins", 0), 0))
+    base["slots"]["free_spin_bet"] = max(0, safe_int(base["slots"].get("free_spin_bet", 0), 0))
+    base["slots"]["streak"] = max(0, safe_int(base["slots"].get("streak", 0), 0))
+    base["loans"] = normalize_loans(base.get("loans"))
+    base["fire_station"] = normalize_fire_station_state(base["fire_station"])
+    return base
+
+
+def gross_assets(chips, profile):
+    return int(chips) + int(profile.get("bank", 0))
+
+
+def total_debt(profile):
+    return sum(max(0, safe_int(loan.get("balance", 0), 0)) for loan in profile.get("loans", []))
+
+
+def total_assets(chips, profile):
+    return gross_assets(chips, profile) - total_debt(profile)
+
+
+def update_career_high(chips, profile):
+    profile["career_high_assets"] = max(profile.get("career_high_assets", INITIAL_CHIPS), total_assets(chips, profile))
+
+
+def loan_tier_cap(chips, profile):
+    assets = total_assets(chips, profile)
+    if assets <= 0:
+        return 0
+    return max(MIN_LOAN_AMOUNT, int(assets * 2))
+
+
+def next_loan_tier_index(chips, profile):
+    cap = loan_tier_cap(chips, profile)
+    if cap <= 0:
+        return None
+    loans = profile.get("loans", [])
+    for idx, loan in enumerate(loans):
+        balance = safe_int(loan.get("balance", 0), 0)
+        if balance < cap:
+            if idx == 0:
+                return idx
+            prev_balance = safe_int(loans[idx - 1].get("balance", 0), 0)
+            if prev_balance >= cap:
+                return idx
+            return None
+    return None
+
+
+def max_loan_borrow_amount(chips, profile):
+    tier_index = next_loan_tier_index(chips, profile)
+    if tier_index is None:
+        return 0
+    cap = loan_tier_cap(chips, profile)
+    return max(0, cap - safe_int(profile["loans"][tier_index].get("balance", 0), 0))
+
+
+def min_loan_borrow_amount(chips, profile):
+    max_amount = max_loan_borrow_amount(chips, profile)
+    if max_amount <= 0:
+        return 0
+    return min(MIN_LOAN_AMOUNT, max_amount)
+
+
+def operation_progress(profile):
+    return profile.get("operation_count", 0) % DAILY_OPERATION_COUNT
+
+
+def apply_bank_day(chips, stats, profile):
+    messages = []
+    bank_interest = 0
+    if profile.get("bank", 0) > 0:
+        bank_interest = max(1, int(round(profile["bank"] * BANK_DAILY_INTEREST)))
+        profile["bank"] += bank_interest
+        stats["bank_interest_earned"] += bank_interest
+
+    loan_interest = []
+    for idx, tier in enumerate(LOAN_TIERS):
+        balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
+        if balance <= 0:
+            loan_interest.append(0)
+            continue
+        interest = max(1, int(round(balance * tier["daily_rate"])))
+        profile["loans"][idx]["balance"] += interest
+        stats["loan_interest_paid"] += interest
+        loan_interest.append(interest)
+
+    profile["bank_days_elapsed"] += 1
+    summary = [f"第 {profile['bank_days_elapsed']} 天结息"]
+    if bank_interest:
+        summary.append(f"存款 +${bank_interest}")
+    debt_interest = sum(loan_interest)
+    if debt_interest:
+        summary.append(f"贷款利息 -${debt_interest}")
+    if len(summary) > 1:
+        messages.append(colored("  [银行结息] " + " / ".join(summary), C.YELLOW))
+    return messages
+
+
+def record_operations(chips, stats, profile, count=1):
+    messages = []
+    count = max(0, safe_int(count, 0))
+    if count <= 0:
+        return messages
+    profile["operation_count"] += count
+    stats["operations_count"] += count
+    while profile["operation_count"] >= DAILY_OPERATION_COUNT:
+        profile["operation_count"] -= DAILY_OPERATION_COUNT
+        messages.extend(apply_bank_day(chips, stats, profile))
+        refresh_career_status(chips, stats, profile)
+    return messages
+
+
+def can_claim_government_aid(chips, profile):
+    return (
+        not profile.get("retired")
+        and total_assets(chips, profile) <= 0
+        and profile.get("government_aid_used", 0) < MAX_GOVERNMENT_AID
+    )
+
+
+def refresh_career_status(chips, stats, profile):
+    update_career_high(chips, profile)
+    if total_assets(chips, profile) <= 0 and profile.get("government_aid_used", 0) >= MAX_GOVERNMENT_AID:
+        if not profile.get("retired"):
+            profile["retired"] = True
+            profile["retired_at"] = now_str()
+            profile["retire_reason"] = "政府补贴已用尽，净资产归零，生涯终结。"
+        return True
+    return profile.get("retired", False)
+
+
+def normalized_save_data(slot, data=None):
+    data = data or {}
+    chips = safe_int(data.get("chips", INITIAL_CHIPS), INITIAL_CHIPS)
+    stats = normalize_stats(data.get("stats"))
+    profile = normalize_profile(data.get("profile"))
+    if "created_at" not in profile or not profile["created_at"]:
+        profile["created_at"] = data.get("save_time", now_str())
+    refresh_career_status(chips, stats, profile)
+    normalized = {
+        "version": data.get("version", GAME_VERSION),
+        "chips": chips,
+        "stats": stats,
+        "profile": profile,
+        "save_time": data.get("save_time", now_str()),
+        "slot": slot,
+    }
+    return normalized
+
 
 def ensure_save_dir():
     os.makedirs(SAVE_DIR, exist_ok=True)
@@ -23,7 +391,8 @@ def save_path(slot):
 def save_game(slot, data):
     """保存游戏到指定槽位"""
     ensure_save_dir()
-    data["save_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["version"] = GAME_VERSION
+    data["save_time"] = now_str()
     data["slot"] = slot
     with open(save_path(slot), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -48,36 +417,98 @@ def list_saves():
     saves = {}
     for i in range(1, MAX_SLOTS + 1):
         data = load_game(i)
+        if data is not None:
+            data = normalized_save_data(i, data)
         saves[i] = data
     return saves
 
-def auto_save(slot, chips, stats):
+def auto_save(slot, chips, stats, profile):
     """自动存档"""
+    refresh_career_status(chips, stats, profile)
     data = {
         "chips": chips,
         "stats": stats,
+        "profile": profile,
     }
     save_game(slot, data)
 
+
+def short_save_time(text):
+    if not text:
+        return "???"
+    if len(text) >= 16:
+        return text[5:16]
+    return text
+
+
+def show_career_summary(chips, stats, profile, slot, wait=True):
+    clear()
+    assets = total_assets(chips, profile)
+    debt = total_debt(profile)
+    total_games = stats.get("wins", 0) + stats.get("losses", 0) + stats.get("pushes", 0)
+    win_rate = (stats.get("wins", 0) / total_games * 100) if total_games else 0
+    lines = [
+        f"存档:         {colored(f'槽位 {slot}', C.CYAN)}",
+        f"版本:         {colored(GAME_VERSION, C.WHITE)}",
+        f"创建时间:     {colored(profile.get('created_at', '???'), C.DIM)}",
+        f"结束时间:     {colored(profile.get('retired_at', '进行中') or '进行中', C.DIM)}",
+        "",
+        f"总局数:       {colored(str(total_games), C.WHITE)}",
+        f"胜/负/平:     {colored(str(stats.get('wins', 0)), C.GREEN)}/{colored(str(stats.get('losses', 0)), C.RED)}/{colored(str(stats.get('pushes', 0)), C.BLUE)}",
+        f"胜率:         {colored(f'{win_rate:.1f}%', C.YELLOW)}",
+        f"最大单笔赢:   {colored('$' + str(stats.get('biggest_win', 0)), C.GREEN)}",
+        f"累计下注:     {colored('$' + str(stats.get('total_bet', 0)), C.CYAN)}",
+        "",
+        f"最终现金:     {colored('$' + str(chips), C.RED if chips <= 0 else C.GREEN)}",
+        f"银行余额:     {colored('$' + str(profile.get('bank', 0)), C.YELLOW)}",
+        f"贷款负债:     {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}",
+        f"最终净资产:   {colored('$' + str(assets), C.RED if assets <= 0 else C.GREEN)}",
+        f"资产峰值:     {colored('$' + str(profile.get('career_high_assets', INITIAL_CHIPS)), C.MAGENTA)}",
+        f"政府补贴:     {colored(str(profile.get('government_aid_used', 0)), C.YELLOW)}/{MAX_GOVERNMENT_AID}",
+        f"Boss 击败数:  {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
+        f"银行天数:     {colored(str(profile.get('bank_days_elapsed', 0)), C.CYAN)}",
+    ]
+    if profile.get("retire_reason"):
+        lines.extend(["", colored(profile["retire_reason"], C.RED)])
+    print(box(lines, width=50, title="生涯总结", color=C.RED if profile.get("retired") else C.MAGENTA))
+    if wait:
+        pause()
+
+
 def save_menu():
-    """存档管理界面，返回 (chips, stats, active_slot) 或 None"""
+    """存档管理界面，返回 (chips, stats, profile, active_slot) 或 None"""
     while True:
         clear()
-        print(colored("\n  ── 存档管理 ──\n", C.CYAN))
+        print(colored(f"\n  ── 存档管理 ── {GAME_VERSION}\n", C.CYAN))
         saves = list_saves()
 
         lines = []
         for i in range(1, MAX_SLOTS + 1):
             data = saves[i]
             if data:
-                chip_str = f"${data['chips']}"
-                t = data.get('save_time', '???')
-                wins = data.get('stats', {}).get('wins', 0)
-                losses = data.get('stats', {}).get('losses', 0)
-                lines.append(
-                    colored(str(i), C.GREEN) +
-                    f"  {colored(chip_str, C.YELLOW)}  胜{wins}/负{losses}  {colored(t, C.DIM)}"
-                )
+                chips = data["chips"]
+                profile = data["profile"]
+                t = short_save_time(data.get("save_time", "???"))
+                wins = data["stats"].get("wins", 0)
+                losses = data["stats"].get("losses", 0)
+                assets = total_assets(chips, profile)
+                debt = total_debt(profile)
+                if profile.get("retired"):
+                    slot_line = (
+                        colored(str(i), C.GREEN)
+                        + "  "
+                        + colored("生涯结束", C.RED)
+                        + f"  资产{colored('$' + str(assets), C.RED)}  {colored(t, C.DIM)}"
+                    )
+                else:
+                    slot_line = (
+                        colored(str(i), C.GREEN)
+                        + f"  现金{colored('$' + str(chips), C.YELLOW)}"
+                        + f"/银{colored('$' + str(profile.get('bank', 0)), C.CYAN)}"
+                        + f"/债{colored('$' + str(debt), C.RED if debt else C.DIM)}"
+                        + f"  胜{wins}/负{losses}  {colored(t, C.DIM)}"
+                    )
+                lines.append(slot_line)
             else:
                 lines.append(colored(str(i), C.GREEN) + colored("  ── 空槽位 ──", C.DIM))
         lines.append("")
@@ -85,7 +516,7 @@ def save_menu():
         lines.append(colored("D", C.RED) + "  删除存档")
         lines.append(colored("0", C.RED) + "  退出游戏")
 
-        print(box(lines, width=52, title="存档", color=C.CYAN))
+        print(box(lines, width=64, title="存档", color=C.CYAN))
         print(colored("\n  输入槽位编号加载，N 新建，D 删除，0 退出", C.DIM))
 
         try:
@@ -104,12 +535,12 @@ def save_menu():
                 print(colored("  所有槽位已满！请先删除一个存档。", C.RED))
                 pause()
                 continue
-            stats = {"wins": 0, "losses": 0, "pushes": 0,
-                     "blackjacks": 0, "total_bet": 0, "biggest_win": 0}
-            auto_save(slot, 1000, stats)
+            stats = default_stats()
+            profile = default_profile()
+            auto_save(slot, INITIAL_CHIPS, stats, profile)
             print(colored(f"  新游戏已创建在槽位 {slot}！", C.GREEN))
             pause()
-            return (1000, stats, slot)
+            return (INITIAL_CHIPS, stats, profile, slot)
         elif choice == 'D':
             print(f"  输入要删除的槽位 (1-{MAX_SLOTS}):")
             try:
@@ -130,17 +561,18 @@ def save_menu():
             slot = int(choice)
             data = saves[slot]
             if data:
-                stats = data.get("stats", {"wins": 0, "losses": 0, "pushes": 0,
-                                            "blackjacks": 0, "total_bet": 0, "biggest_win": 0})
-                return (data["chips"], stats, slot)
+                if data["profile"].get("retired"):
+                    show_career_summary(data["chips"], data["stats"], data["profile"], slot)
+                    continue
+                return (data["chips"], data["stats"], data["profile"], slot)
             else:
                 # 空槽位，新建
-                stats = {"wins": 0, "losses": 0, "pushes": 0,
-                         "blackjacks": 0, "total_bet": 0, "biggest_win": 0}
-                auto_save(slot, 1000, stats)
+                stats = default_stats()
+                profile = default_profile()
+                auto_save(slot, INITIAL_CHIPS, stats, profile)
                 print(colored(f"  新游戏已创建在槽位 {slot}！", C.GREEN))
                 pause()
-                return (1000, stats, slot)
+                return (INITIAL_CHIPS, stats, profile, slot)
 
 # ============================================================
 # 颜色系统
@@ -209,7 +641,7 @@ def len_display(s):
             width += 1
     return width
 
-def header(chips, slot=None, stats=None):
+def header(chips, slot=None, stats=None, profile=None):
     """顶部状态栏"""
     chip_str = f"${chips}"
     if chips >= 1000:
@@ -219,16 +651,233 @@ def header(chips, slot=None, stats=None):
     else:
         chip_color = C.RED
     lines = [
-        bold(colored("♠ ♥ ♣ ♦  Leo's Casino  ♦ ♣ ♥ ♠", C.YELLOW)),
+        bold(colored(f"♠ ♥ ♣ ♦  Leo's Casino {GAME_VERSION}  ♦ ♣ ♥ ♠", C.YELLOW)),
         "",
         f"  筹码: {colored(chip_str, chip_color)}",
     ]
+    if profile is not None:
+        assets = total_assets(chips, profile)
+        debt = total_debt(profile)
+        lines.append(
+            f"  银行: {colored('$' + str(profile.get('bank', 0)), C.CYAN)}"
+            f"  负债: {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}"
+        )
+        lines.append(
+            f"  净资产: {colored('$' + str(assets), C.GREEN if assets > 0 else C.RED)}"
+            f"  结息: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)}步后"
+        )
     if slot is not None:
         slot_info = f"  存档: 槽位 {slot}"
         if stats:
             slot_info += f"  W{stats.get('wins',0)}/L{stats.get('losses',0)}"
         lines.append(colored(slot_info, C.DIM))
-    print(box(lines, width=44, color=C.YELLOW))
+    print(box(lines, width=64, color=C.YELLOW))
+
+
+def max_bank_withdrawal(chips, profile):
+    assets = total_assets(chips, profile)
+    ratio = profile.get("bank_ratio", MIN_BANK_RATIO)
+    limit = int(assets * ratio - chips)
+    return max(0, min(profile.get("bank", 0), limit))
+
+
+def loan_lines(chips, profile):
+    cap = loan_tier_cap(chips, profile)
+    lines = []
+    for idx, tier in enumerate(LOAN_TIERS):
+        balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
+        status = f"${balance}/${cap}" if cap > 0 else f"${balance}/锁定"
+        lines.append(f"{tier['name']}: {colored(status, C.RED if balance > 0 else C.DIM)}  日息 {tier['daily_rate'] * 100:.2f}%")
+    return lines
+
+
+def bank_menu(chips, slot, stats, profile):
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        assets = total_assets(chips, profile)
+        debt = total_debt(profile)
+        ratio = profile.get("bank_ratio", MIN_BANK_RATIO)
+        max_withdraw = max_bank_withdrawal(chips, profile)
+        next_borrow = max_loan_borrow_amount(chips, profile)
+        min_borrow = min_loan_borrow_amount(chips, profile)
+        lines = [
+            f"现金:       {colored('$' + str(chips), C.GREEN if chips > 0 else C.RED)}",
+            f"银行余额:   {colored('$' + str(profile.get('bank', 0)), C.CYAN)}",
+            f"贷款负债:   {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}",
+            f"净资产:     {colored('$' + str(assets), C.YELLOW if assets > 0 else C.RED)}",
+            f"安全比率:   {colored(f'{ratio:.2f}', C.MAGENTA)}",
+            f"本次最多取: {colored('$' + str(max_withdraw), C.WHITE)}",
+            f"当前可借:   {colored('$' + str(next_borrow), C.GREEN if next_borrow > 0 else C.DIM)}",
+            f"结息倒计时: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)} 操作",
+            "",
+            colored("1", C.GREEN) + "  存钱",
+            colored("2", C.GREEN) + "  取钱",
+            colored("3", C.GREEN) + "  设置安全比率",
+            colored("4", C.GREEN) + "  借款",
+            colored("5", C.GREEN) + "  还款",
+            colored("0", C.RED) + "  返回大厅",
+        ]
+        print(colored("\n  ── 银行 ──\n", C.CYAN))
+        print(box(lines + [""] + loan_lines(chips, profile), width=52, title="银行系统", color=C.CYAN))
+        print(colored("  取钱后，手上现金不能超过 净资产 x 安全比率。", C.DIM))
+        print(colored("  借款按一档→二档→三档顺序开放；每 20 次操作自动结算一天利息。", C.DIM))
+
+        choice = input(colored("\n  选择 > ", C.YELLOW)).strip()
+        if choice == '0':
+            return chips
+        if choice == '1':
+            if chips <= 0:
+                print(colored("  你手上没有可存入的现金。", C.RED))
+                pause()
+                continue
+            print(f"  输入存入金额 (1-{chips})，或输入 0 取消:")
+            try:
+                amount = int(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if amount == 0:
+                continue
+            if amount < 1 or amount > chips:
+                print(colored("  金额无效。", C.RED))
+                pause()
+                continue
+            chips -= amount
+            profile["bank"] += amount
+            stats["bank_deposit_total"] += amount
+            notices = record_operations(chips, stats, profile, 1)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  已存入 ${amount}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '2':
+            if profile.get("bank", 0) <= 0:
+                print(colored("  银行里没有钱。", C.RED))
+                pause()
+                continue
+            if max_withdraw <= 0:
+                print(colored("  当前安全比率限制下，暂时不能再取钱。", C.RED))
+                pause()
+                continue
+            print(f"  输入取出金额 (1-{max_withdraw})，或输入 0 取消:")
+            try:
+                amount = int(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if amount == 0:
+                continue
+            if amount < 1 or amount > max_withdraw:
+                print(colored("  超出可取范围。", C.RED))
+                pause()
+                continue
+            chips += amount
+            profile["bank"] -= amount
+            stats["bank_withdraw_total"] += amount
+            notices = record_operations(chips, stats, profile, 1)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  已取出 ${amount}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '3':
+            print(f"  输入新的安全比率 ({MIN_BANK_RATIO:.1f}-{MAX_BANK_RATIO:.1f})，如 0.6:")
+            try:
+                ratio_input = float(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if ratio_input < MIN_BANK_RATIO or ratio_input > MAX_BANK_RATIO:
+                print(colored("  超出允许范围。", C.RED))
+                pause()
+                continue
+            profile["bank_ratio"] = round(ratio_input, 2)
+            notices = record_operations(chips, stats, profile, 1)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  安全比率已设置为 {profile['bank_ratio']:.2f}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '4':
+            tier_index = next_loan_tier_index(chips, profile)
+            if tier_index is None or next_borrow <= 0:
+                print(colored("  当前没有可借额度。", C.RED))
+                pause()
+                continue
+            print(colored(f"  当前档位最少借款 ${min_borrow}。", C.DIM))
+            print(colored(f"  将进入{LOAN_TIERS[tier_index]['name']}，日息 {LOAN_TIERS[tier_index]['daily_rate'] * 100:.2f}%。", C.DIM))
+            print(f"  输入借款金额 ({min_borrow}-{next_borrow})，或输入 0 取消:")
+            try:
+                amount = int(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if amount == 0:
+                continue
+            if amount < min_borrow or amount > next_borrow:
+                print(colored("  超出当前档位可借范围。", C.RED))
+                pause()
+                continue
+            profile["loans"][tier_index]["balance"] += amount
+            chips += amount
+            stats["loan_borrowed_total"] += amount
+            notices = record_operations(chips, stats, profile, 1)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  已从{LOAN_TIERS[tier_index]['name']}借入 ${amount}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '5':
+            if debt <= 0:
+                print(colored("  当前没有贷款需要偿还。", C.RED))
+                pause()
+                continue
+            if chips <= 0:
+                print(colored("  手上没有现金可还款。", C.RED))
+                pause()
+                continue
+            max_repay = min(chips, debt)
+            print(f"  输入还款金额 (1-{max_repay})，或输入 0 取消:")
+            try:
+                amount = int(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if amount == 0:
+                continue
+            if amount < 1 or amount > max_repay:
+                print(colored("  金额无效。", C.RED))
+                pause()
+                continue
+            chips -= amount
+            remaining = amount
+            for idx in range(len(LOAN_TIERS) - 1, -1, -1):
+                balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
+                if balance <= 0:
+                    continue
+                paid = min(balance, remaining)
+                profile["loans"][idx]["balance"] -= paid
+                remaining -= paid
+                if remaining <= 0:
+                    break
+            stats["loan_repaid_total"] += amount
+            notices = record_operations(chips, stats, profile, 1)
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  已还款 ${amount}。", C.GREEN))
+            for notice in notices:
+                print(notice)
+            pause()
+
+
+def claim_government_aid(chips, slot, stats, profile):
+    if not can_claim_government_aid(chips, profile):
+        print(colored("  当前不符合领取补贴的条件。", C.RED))
+        pause()
+        return chips
+    chips += GOVERNMENT_AID_AMOUNT
+    profile["government_aid_used"] += 1
+    stats["government_aid_taken"] += 1
+    auto_save(slot, chips, stats, profile)
+    print(colored(f"  政府补贴到账 ${GOVERNMENT_AID_AMOUNT}。第 {profile['government_aid_used']}/{MAX_GOVERNMENT_AID} 次。", C.GREEN))
+    pause()
+    return chips
 
 # ============================================================
 # 扑克牌系统
@@ -303,13 +952,44 @@ def hand_value(cards):
         aces -= 1
     return total
 
+
+def is_blackjack_hand(cards):
+    return len(cards) == 2 and hand_value(cards) == 21
+
+
+def can_split_cards(cards):
+    return len(cards) == 2 and cards[0].rank == cards[1].rank
+
+
+def blackjack_reserved_amount(hands, insurance_bet=0):
+    return sum(hand["bet"] for hand in hands) + insurance_bet
+
+
+def render_blackjack_hands(hands, active_index):
+    for idx, hand in enumerate(hands, start=1):
+        markers = []
+        if idx - 1 == active_index:
+            markers.append("行动中")
+        if hand.get("split"):
+            markers.append("分牌")
+        if hand.get("doubled"):
+            markers.append("加倍")
+        if hand.get("surrendered"):
+            markers.append("投降")
+        if hand.get("done") and not hand.get("surrendered"):
+            markers.append("完成")
+        marker_text = f" ({'/'.join(markers)})" if markers else ""
+        label = f"手牌{idx} [{hand_value(hand['cards'])}] 下注:${hand['bet']}{marker_text}"
+        render_cards(hand["cards"], label)
+        print()
+
 # ============================================================
 # Blackjack (21点)
 # ============================================================
-def blackjack(chips, slot=None, stats=None):
+def blackjack(chips, slot=None, stats=None, profile=None):
     while True:
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored("\n  ── Blackjack 21点 ──\n", C.CYAN))
 
         if chips <= 0:
@@ -332,107 +1012,221 @@ def blackjack(chips, slot=None, stats=None):
             continue
 
         deck = Deck()
-        player = [deck.deal(), deck.deal()]
+        player_hand = {
+            "cards": [deck.deal(), deck.deal()],
+            "bet": bet,
+            "done": False,
+            "split": False,
+            "doubled": False,
+            "surrendered": False,
+            "acted": False,
+        }
         dealer = [deck.deal(), deck.deal()]
         dealer[1].hidden = True
+        hands = [player_hand]
+        insurance_bet = 0
+        insurance_delta = 0
+        insurance_text = None
 
-        # 游戏循环
-        doubled = False
-        while True:
+        available_bankroll = chips - blackjack_reserved_amount(hands)
+        if dealer[0].rank == 'A' and available_bankroll >= max(1, bet // 2):
+            insurance_offer = max(1, bet // 2)
             clear()
-            header(chips, slot, stats)
+            header(chips, slot, stats, profile)
             print(colored(f"\n  ── Blackjack ── 下注: ${bet} ──\n", C.CYAN))
             render_cards(dealer, f"庄家 [{hand_value(dealer)}]")
             print()
-            render_cards(player, f"你 [{hand_value(player)}]")
+            render_cards(player_hand["cards"], f"你 [{hand_value(player_hand['cards'])}]")
+            print(colored(f"\n  庄家明牌是 A，可买保险 ${insurance_offer}。", C.YELLOW))
+            print("  [Y] 购买保险  [N] 不买")
+            choice = input(colored("  > ", C.YELLOW)).strip().upper()
+            if choice == 'Y':
+                insurance_bet = insurance_offer
 
-            pv = hand_value(player)
-            if pv == 21 and len(player) == 2:
-                print(colored("\n  ★ Blackjack！ ★", C.YELLOW))
-                break
-            if pv > 21:
-                print(colored("\n  爆了！", C.RED))
-                break
+        dealer[1].hidden = False
+        dealer_blackjack = is_blackjack_hand(dealer)
+        dealer[1].hidden = True
 
-            options = f"  [H] 要牌  [S] 停牌"
-            if len(player) == 2 and chips >= bet * 2:
-                options += "  [D] 加倍"
-            print(f"\n{options}")
-            action = input(colored("  > ", C.YELLOW)).strip().upper()
+        if dealer_blackjack:
+            dealer[1].hidden = False
+            clear()
+            header(chips, slot, stats, profile)
+            print(colored(f"\n  ── 结算 ── 下注: ${bet} ──\n", C.CYAN))
+            render_cards(dealer, f"庄家 [{hand_value(dealer)}]")
+            print()
+            render_cards(player_hand["cards"], f"你 [{hand_value(player_hand['cards'])}]")
 
-            if action == 'H':
-                player.append(deck.deal())
-            elif action == 'D' and len(player) == 2 and chips >= bet * 2:
-                bet *= 2
-                doubled = True
-                player.append(deck.deal())
-                break
-            elif action == 'S':
-                break
+            total_delta = insurance_bet * 2 if insurance_bet else 0
+            total_bet = bet + insurance_bet
+            player_blackjack = is_blackjack_hand(player_hand["cards"])
+
+            if player_blackjack:
+                stats["pushes"] += 1
+                print(colored("\n  庄家 Blackjack，但你也有 Blackjack。主注平局。", C.BLUE))
             else:
+                total_delta -= bet
+                stats["losses"] += 1
+                print(colored("\n  庄家 Blackjack！主注输掉。", C.RED))
+
+            if insurance_bet:
+                print(colored(f"  保险命中！+${insurance_bet * 2}", C.GREEN))
+
+            chips += total_delta
+            if total_delta > 0:
+                stats["biggest_win"] = max(stats["biggest_win"], total_delta)
+            stats["total_bet"] += total_bet
+            notices = record_operations(chips, stats, profile, 1)
+
+            if slot is not None and stats is not None and profile is not None:
+                auto_save(slot, chips, stats, profile)
+                print(colored("  [自动存档]", C.DIM))
+            for notice in notices:
+                print(notice)
+            pause()
+            continue
+
+        if insurance_bet:
+            insurance_delta = -insurance_bet
+            insurance_text = colored(f"  保险未中，结算时 -${insurance_bet}", C.DIM)
+
+        if is_blackjack_hand(player_hand["cards"]):
+            player_hand["done"] = True
+
+        active = 0
+        while active < len(hands):
+            hand = hands[active]
+            if hand["done"]:
+                active += 1
                 continue
 
-        # 庄家亮牌
-        dealer[1].hidden = False
+            while not hand["done"]:
+                clear()
+                header(chips, slot, stats, profile)
+                print(colored(f"\n  ── Blackjack ── 基础下注: ${bet} ──\n", C.CYAN))
+                render_cards(dealer, f"庄家 [{hand_value(dealer)}]")
+                print()
+                render_blackjack_hands(hands, active)
+                if insurance_text:
+                    print(insurance_text)
 
-        pv = hand_value(player)
-        if pv <= 21:
+                value = hand_value(hand["cards"])
+                if value >= 21:
+                    hand["done"] = True
+                    break
+
+                reserved = blackjack_reserved_amount(hands, insurance_bet)
+                extra_bankroll = chips - reserved
+                options = ["[H] 要牌", "[S] 停牌"]
+                if len(hand["cards"]) == 2 and extra_bankroll >= hand["bet"]:
+                    options.append("[D] 加倍")
+                if len(hands) == 1 and not hand["acted"] and can_split_cards(hand["cards"]) and extra_bankroll >= hand["bet"]:
+                    options.append("[P] 分牌")
+                if len(hands) == 1 and not hand["acted"]:
+                    options.append("[U] 投降")
+                print("\n  " + "  ".join(options))
+                action = input(colored("  > ", C.YELLOW)).strip().upper()
+
+                if action == 'H':
+                    hand["cards"].append(deck.deal())
+                    hand["acted"] = True
+                    if hand_value(hand["cards"]) >= 21:
+                        hand["done"] = True
+                elif action == 'S':
+                    hand["done"] = True
+                elif action == 'D' and len(hand["cards"]) == 2 and extra_bankroll >= hand["bet"]:
+                    hand["bet"] *= 2
+                    hand["doubled"] = True
+                    hand["acted"] = True
+                    hand["cards"].append(deck.deal())
+                    hand["done"] = True
+                elif action == 'P' and len(hands) == 1 and not hand["acted"] and can_split_cards(hand["cards"]) and extra_bankroll >= hand["bet"]:
+                    second_card = hand["cards"].pop()
+                    new_hand = {
+                        "cards": [second_card, deck.deal()],
+                        "bet": hand["bet"],
+                        "done": False,
+                        "split": True,
+                        "doubled": False,
+                        "surrendered": False,
+                        "acted": False,
+                    }
+                    hand["cards"].append(deck.deal())
+                    hand["split"] = True
+                    hands.append(new_hand)
+                    if hand_value(hand["cards"]) == 21:
+                        hand["done"] = True
+                    if hand_value(new_hand["cards"]) == 21:
+                        new_hand["done"] = True
+                elif action == 'U' and len(hands) == 1 and not hand["acted"]:
+                    hand["surrendered"] = True
+                    hand["done"] = True
+                else:
+                    continue
+
+            active += 1
+
+        dealer[1].hidden = False
+        live_hands = [
+            hand for hand in hands
+            if not hand.get("surrendered") and hand_value(hand["cards"]) <= 21
+        ]
+        if live_hands:
             while hand_value(dealer) < 17:
                 dealer.append(deck.deal())
 
         dv = hand_value(dealer)
 
-        # 结算
         clear()
-        header(chips, slot, stats)
-        print(colored(f"\n  ── 结算 ── 下注: ${bet} ──\n", C.CYAN))
+        header(chips, slot, stats, profile)
+        print(colored(f"\n  ── 结算 ── 基础下注: ${bet} ──\n", C.CYAN))
         render_cards(dealer, f"庄家 [{dv}]")
         print()
-        render_cards(player, f"你 [{pv}]")
+        render_blackjack_hands(hands, -1)
 
-        if pv > 21:
-            result = "LOSE"
-        elif pv == 21 and len(player) == 2:
-            result = "BLACKJACK"
-        elif dv > 21:
-            result = "WIN"
-        elif pv > dv:
-            result = "WIN"
-        elif pv == dv:
-            result = "PUSH"
-        else:
-            result = "LOSE"
+        total_delta = insurance_delta
+        if insurance_text:
+            print(insurance_text)
 
-        if result == "BLACKJACK":
-            winnings = int(bet * 1.5)
-            chips += winnings
-            if stats:
+        for idx, hand in enumerate(hands, start=1):
+            pv = hand_value(hand["cards"])
+            if hand.get("surrendered"):
+                loss = hand["bet"] // 2
+                total_delta -= loss
+                stats["losses"] += 1
+                print(colored(f"  手牌{idx}: 投降，-${loss}", C.RED))
+            elif pv > 21:
+                total_delta -= hand["bet"]
+                stats["losses"] += 1
+                print(colored(f"  手牌{idx}: 爆牌，-${hand['bet']}", C.RED))
+            elif not hand.get("split") and is_blackjack_hand(hand["cards"]):
+                winnings = int(hand["bet"] * 1.5)
+                total_delta += winnings
                 stats["wins"] += 1
                 stats["blackjacks"] += 1
-                stats["total_bet"] += bet
-                stats["biggest_win"] = max(stats["biggest_win"], winnings)
-            print(colored(f"\n  ★ BLACKJACK! +${winnings} ★", C.YELLOW))
-        elif result == "WIN":
-            chips += bet
-            if stats:
+                print(colored(f"  手牌{idx}: Blackjack！+${winnings}", C.YELLOW))
+            elif dv > 21 or pv > dv:
+                total_delta += hand["bet"]
                 stats["wins"] += 1
-                stats["total_bet"] += bet
-                stats["biggest_win"] = max(stats["biggest_win"], bet)
-            print(colored(f"\n  ✓ 你赢了！+${bet}", C.GREEN))
-        elif result == "PUSH":
-            if stats:
+                print(colored(f"  手牌{idx}: 赢了！+${hand['bet']}", C.GREEN))
+            elif pv == dv:
                 stats["pushes"] += 1
-            print(colored(f"\n  ─ 平局，退回筹码", C.BLUE))
-        else:
-            chips -= bet
-            if stats:
+                print(colored(f"  手牌{idx}: 平局，退回筹码", C.BLUE))
+            else:
+                total_delta -= hand["bet"]
                 stats["losses"] += 1
-                stats["total_bet"] += bet
-            print(colored(f"\n  ✗ 你输了... -${bet}", C.RED))
+                print(colored(f"  手牌{idx}: 输了，-${hand['bet']}", C.RED))
 
-        if slot is not None and stats is not None:
-            auto_save(slot, chips, stats)
+        chips += total_delta
+        stats["total_bet"] += blackjack_reserved_amount(hands, insurance_bet)
+        if total_delta > 0:
+            stats["biggest_win"] = max(stats["biggest_win"], total_delta)
+        notices = record_operations(chips, stats, profile, 1)
+
+        if slot is not None and stats is not None and profile is not None:
+            auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
+        for notice in notices:
+            print(notice)
 
         pause()
     return chips
@@ -464,10 +1258,10 @@ def roll_animation():
         time.sleep(0.12)
     print()
 
-def craps(chips, slot=None, stats=None):
+def craps(chips, slot=None, stats=None, profile=None):
     while True:
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored("\n  ── Craps 骰子 ──\n", C.MAGENTA))
         print(colored("  规则简介:", C.DIM))
         print(colored("  Come Out Roll: 7或11直接赢，2/3/12直接输", C.DIM))
@@ -506,9 +1300,12 @@ def craps(chips, slot=None, stats=None):
                 stats["total_bet"] += bet
                 stats["biggest_win"] = max(stats["biggest_win"], bet)
             print(colored(f"\n  ✓ 自然赢！+${bet}", C.GREEN))
-            if slot is not None and stats is not None:
-                auto_save(slot, chips, stats)
+            notices = record_operations(chips, stats, profile, 1)
+            if slot is not None and stats is not None and profile is not None:
+                auto_save(slot, chips, stats, profile)
                 print(colored("  [自动存档]", C.DIM))
+            for notice in notices:
+                print(notice)
             pause()
             continue
         elif total in (2, 3, 12):
@@ -517,9 +1314,12 @@ def craps(chips, slot=None, stats=None):
                 stats["losses"] += 1
                 stats["total_bet"] += bet
             print(colored(f"\n  ✗ Craps！输了 -${bet}", C.RED))
-            if slot is not None and stats is not None:
-                auto_save(slot, chips, stats)
+            notices = record_operations(chips, stats, profile, 1)
+            if slot is not None and stats is not None and profile is not None:
+                auto_save(slot, chips, stats, profile)
                 print(colored("  [自动存档]", C.DIM))
+            for notice in notices:
+                print(notice)
             pause()
             continue
 
@@ -554,99 +1354,177 @@ def craps(chips, slot=None, stats=None):
                 print(colored("    继续掷...", C.DIM))
                 pause("按 Enter 继续掷骰...")
 
-        if slot is not None and stats is not None:
-            auto_save(slot, chips, stats)
+        notices = record_operations(chips, stats, profile, 1)
+        if slot is not None and stats is not None and profile is not None:
+            auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
+        for notice in notices:
+            print(notice)
         pause()
     return chips
 # ============================================================
-SLOT_SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '💎', '7️⃣', '🔔']
-SLOT_WEIGHTS = [30,   25,   20,   15,    5,    3,    2]   # 权重
+SLOT_WILD = '🃏'
+SLOT_SCATTER = '⭐'
+SLOT_REGULAR_SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '💎', '7️⃣', '🔔']
+SLOT_SYMBOLS = SLOT_REGULAR_SYMBOLS + [SLOT_WILD, SLOT_SCATTER]
+SLOT_WEIGHTS = [28, 24, 20, 14, 5, 3, 2, 4, 3]
 
 SLOT_PAYOUTS = {
-    '7️⃣':  20,
-    '💎':  15,
-    '🔔':  12,
-    '🍇':   8,
-    '🍊':   5,
-    '🍋':   3,
-    '🍒':   2,
+    '7️⃣': 20,
+    '💎': 15,
+    '🔔': 12,
+    '🍇': 8,
+    '🍊': 5,
+    '🍋': 3,
+    '🍒': 2,
+    SLOT_WILD: 25,
 }
+
 
 def weighted_choice():
     return random.choices(SLOT_SYMBOLS, weights=SLOT_WEIGHTS, k=1)[0]
 
-def slots(chips, slot=None, stats=None):
+
+def render_slot_machine(result):
+    print("\r    ┏━━━┳━━━┳━━━┓")
+    print(f"    ┃ {result[0]} ┃ {result[1]} ┃ {result[2]} ┃")
+    print("    ┗━━━┻━━━┻━━━┛")
+
+
+def slot_line_result(result):
+    if all(symbol == SLOT_WILD for symbol in result):
+        return SLOT_PAYOUTS[SLOT_WILD], "超级 Wild x3"
+
+    for symbol in SLOT_REGULAR_SYMBOLS[::-1]:
+        if all(item in (symbol, SLOT_WILD) for item in result):
+            return SLOT_PAYOUTS[symbol], f"{symbol} 三连"
+
+    if SLOT_SCATTER not in result:
+        for symbol in SLOT_REGULAR_SYMBOLS[::-1]:
+            matches = sum(1 for item in result if item in (symbol, SLOT_WILD))
+            if matches >= 2:
+                return 1, f"{symbol} 两连"
+
+        if result.count(SLOT_WILD) >= 2:
+            return 2, "Wild 两连"
+
+    return 0, ""
+
+
+def slots(chips, slot=None, stats=None, profile=None):
+    slot_state = profile["slots"]
     while True:
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored("\n  ── Slots 老虎机 ──\n", C.MAGENTA))
 
-        if chips <= 0:
-            print(colored("  口袋空空！先去别的桌赢点回来。", C.RED))
+        free_spins = slot_state.get("free_spins", 0)
+        if chips <= 0 and free_spins <= 0:
+            print(colored("  口袋空空，连免费旋转也没有了。先去银行或别的桌想办法。", C.RED))
             pause()
             return chips
 
-        print(f"  当前筹码: {colored(f'${chips}', C.GREEN)}")
-        print(f"  输入下注金额 (1-{chips})，输入 0 返回大厅")
-        try:
-            bet = int(input(colored("  > ", C.YELLOW)))
-        except (ValueError, EOFError):
-            continue
-        if bet == 0:
-            return chips
-        if bet < 1 or bet > chips:
-            print(colored("  无效金额！", C.RED))
-            pause()
-            continue
+        if free_spins > 0 and slot_state.get("free_spin_bet", 0) > 0:
+            bet = slot_state["free_spin_bet"]
+            free_mode = True
+            multiplier = 2 + min(slot_state.get("streak", 0), 3)
+            print(colored(f"  免费旋转剩余: {free_spins}", C.YELLOW))
+            print(colored(f"  本次免费旋转基准下注: ${bet}  当前奖励倍率: x{multiplier}", C.CYAN))
+            print(colored("  按 Enter 开始免费旋转，输入 0 返回大厅保留次数", C.DIM))
+            command = input(colored("  > ", C.YELLOW)).strip()
+            if command == '0':
+                return chips
+        else:
+            free_mode = False
+            multiplier = 1
+            print(colored(f"  当前筹码: ${chips}", C.GREEN))
+            print(colored(f"  免费旋转: {free_spins}", C.YELLOW))
+            print(colored(f"  输入下注金额 (1-{chips})，输入 0 返回大厅", C.DIM))
+            try:
+                bet = int(input(colored("  > ", C.YELLOW)))
+            except (ValueError, EOFError):
+                continue
+            if bet == 0:
+                return chips
+            if bet < 1 or bet > chips:
+                print(colored("  无效金额！", C.RED))
+                pause()
+                continue
 
-        # 转动动画
+        if free_mode:
+            slot_state["free_spins"] -= 1
+
         print()
         for i in range(8):
-            s1 = random.choice(SLOT_SYMBOLS)
-            s2 = random.choice(SLOT_SYMBOLS)
-            s3 = random.choice(SLOT_SYMBOLS)
+            s1 = weighted_choice()
+            s2 = weighted_choice()
+            s3 = weighted_choice()
             sys.stdout.write(f"\r    ┃ {s1} ┃ {s2} ┃ {s3} ┃  ")
             sys.stdout.flush()
-            time.sleep(0.1 + i * 0.04)
+            time.sleep(0.08 + i * 0.03)
 
-        # 最终结果
-        r1, r2, r3 = weighted_choice(), weighted_choice(), weighted_choice()
-        print(f"\r    ┏━━━┳━━━┳━━━┓")
-        print(f"    ┃ {r1} ┃ {r2} ┃ {r3} ┃")
-        print(f"    ┗━━━┻━━━┻━━━┛")
+        result = [weighted_choice(), weighted_choice(), weighted_choice()]
+        print()
+        render_slot_machine(result)
 
-        if r1 == r2 == r3:
-            mult = SLOT_PAYOUTS.get(r1, 2)
-            winnings = bet * mult
+        line_mult, label = slot_line_result(result)
+        scatter_count = result.count(SLOT_SCATTER)
+        free_spins_awarded = 0
+        scatter_bonus = 0
+
+        if scatter_count == 2:
+            free_spins_awarded = 2
+        elif scatter_count == 3:
+            free_spins_awarded = 5
+            scatter_bonus = 2
+
+        winnings = bet * (line_mult + scatter_bonus) * multiplier
+        paid_spin = not free_mode
+
+        if paid_spin:
+            stats["total_bet"] += bet
+
+        if winnings > 0:
             chips += winnings
-            if stats:
-                stats["wins"] += 1
-                stats["total_bet"] += bet
-                stats["biggest_win"] = max(stats["biggest_win"], winnings)
-            if r1 in ('7️⃣', '💎'):
-                print(colored(f"\n  ★★★ JACKPOT! {r1}x3 ★★★", C.YELLOW))
-            else:
-                print(colored(f"\n  ★ 三连！{r1}x3 ★", C.GREEN))
-            print(colored(f"  +${winnings} ({mult}x)", C.GREEN))
-        elif r1 == r2 or r2 == r3 or r1 == r3:
-            winnings = bet
-            chips += winnings
-            if stats:
-                stats["wins"] += 1
-                stats["total_bet"] += bet
-                stats["biggest_win"] = max(stats["biggest_win"], winnings)
-            print(colored(f"\n  ✓ 两连！+${winnings}", C.GREEN))
-        else:
+            stats["wins"] += 1
+            stats["biggest_win"] = max(stats["biggest_win"], winnings)
+            print(colored(f"\n  ★ {label or '奖励命中'} ★", C.GREEN if line_mult < 15 else C.YELLOW))
+            print(colored(f"  +${winnings}  (倍率 x{multiplier})", C.GREEN))
+        elif paid_spin:
             chips -= bet
-            if stats:
-                stats["losses"] += 1
-                stats["total_bet"] += bet
+            stats["losses"] += 1
             print(colored(f"\n  ✗ 没中... -${bet}", C.RED))
+        else:
+            print(colored("\n  这次免费旋转没有打中。", C.DIM))
 
-        if slot is not None and stats is not None:
-            auto_save(slot, chips, stats)
+        if free_spins_awarded:
+            slot_state["free_spins"] += free_spins_awarded
+            slot_state["free_spin_bet"] = bet
+            print(colored(f"  Scatter 触发！额外获得 {free_spins_awarded} 次免费旋转。", C.YELLOW))
+            if scatter_bonus:
+                print(colored(f"  三个 Scatter 追加现金奖励 {scatter_bonus}x！", C.YELLOW))
+
+        if free_mode:
+            if winnings > 0 or free_spins_awarded:
+                slot_state["streak"] += 1
+            else:
+                slot_state["streak"] = 0
+        else:
+            slot_state["streak"] = 0
+            if free_spins_awarded == 0:
+                slot_state["free_spin_bet"] = slot_state.get("free_spin_bet", 0)
+
+        if slot_state["free_spins"] <= 0:
+            slot_state["free_spins"] = 0
+            slot_state["free_spin_bet"] = 0
+            slot_state["streak"] = 0
+
+        notices = record_operations(chips, stats, profile, 1)
+        if slot is not None and stats is not None and profile is not None:
+            auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
+        for notice in notices:
+            print(notice)
 
         pause()
     return chips
@@ -659,17 +1537,13 @@ RANK_ORDER = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
 
 class FireStationAI:
     """有深度的 AI 对手"""
-    def __init__(self):
-        # 玩家画像追踪
-        self.player_profile = {
-            "total_hands": 0,
-            "fold_count": 0,       # 玩家弃牌次数
-            "bluff_caught": 0,     # 被抓到偷鸡
-            "raise_freq": [],      # 每手加注次数记录
-            "showdown_cards": [],   # 摊牌时玩家的牌力
-        }
-        self.personality = random.choice(["tight", "loose", "tricky"])
-        self.mood = 0.5  # 0=保守 1=激进, 动态调整
+    def __init__(self, personality="tight", mood=0.5, player_profile=None, opponent_name="庄家", boss=False, cycle=0):
+        self.player_profile = normalize_player_profile(player_profile)
+        self.personality = personality
+        self.mood = mood
+        self.opponent_name = opponent_name
+        self.boss = boss
+        self.cycle = cycle
 
     def card_strength(self, card):
         """牌力归一化 0~1"""
@@ -769,6 +1643,14 @@ class FireStationAI:
             base_call += 0.15
             base_raise -= 0.10
 
+        # 8. Boss 与周目强度
+        if self.boss:
+            base_raise += 0.08
+            base_fold -= 0.06
+        if self.cycle > 0:
+            base_raise += min(0.04 * self.cycle, 0.16)
+            base_fold -= min(0.03 * self.cycle, 0.12)
+
         # 正规化
         base_raise = max(base_raise, 0.01)
         base_call = max(base_call, 0.01)
@@ -812,9 +1694,12 @@ class FireStationAI:
         else:
             # 弱牌偷鸡要下重注才有威慑
             if random.random() < 0.3:
-                mult = random.uniform(2.0, 4.0)  # 大偷鸡
+                mult = random.uniform(2.0, 4.0 + self.cycle * 0.2)  # 大偷鸡
             else:
                 mult = 1.0
+
+        if self.boss:
+            mult += 0.3
 
         amount = int(current_bet * mult)
         amount = max(amount, min_raise)
@@ -834,8 +1719,10 @@ class FireStationAI:
         if player_folded:
             self.player_profile["fold_count"] += 1
         self.player_profile["raise_freq"].append(player_raises)
+        self.player_profile["raise_freq"] = self.player_profile["raise_freq"][-20:]
         if player_card is not None:
             self.player_profile["showdown_cards"].append(self.card_strength(player_card))
+            self.player_profile["showdown_cards"] = self.player_profile["showdown_cards"][-20:]
 
 
 def render_single_card(card, label="", hidden=False):
@@ -852,14 +1739,63 @@ def render_single_card(card, label="", hidden=False):
         print(f"    {row}")
 
 
-def fire_station(chips, slot=None, stats=None):
+def personality_name(personality):
+    return {
+        "tight": "沉稳",
+        "loose": "豪放",
+        "tricky": "诡诈",
+    }.get(personality, personality)
+
+
+def sync_fire_station_state(profile, ai, ai_chips):
+    profile["fire_station"]["ai_chips"] = ai_chips
+    profile["fire_station"]["mood"] = ai.mood
+    profile["fire_station"]["personality"] = ai.personality
+    profile["fire_station"]["player_profile"] = ai.player_profile
+
+
+def advance_fire_station(profile, stats):
+    fire_state = profile["fire_station"]
+    current = current_fire_opponent(fire_state)
+    stage = fire_state.get("stage", 0) + 1
+    cycle = fire_state.get("cycle", 0)
+
+    if current.get("boss") or stage >= len(FIRE_STATION_OPPONENTS):
+        if current.get("boss"):
+            stats["bosses_defeated"] += 1
+        stage = 0
+        cycle += 1
+
+    fire_state["stage"] = stage
+    fire_state["cycle"] = cycle
+    next_opponent = current_fire_opponent(fire_state)
+    fire_state["ai_chips"] = next_opponent["chips"]
+    fire_state["mood"] = next_opponent["mood"]
+    fire_state["personality"] = next_opponent["personality"]
+    fire_state["player_profile"] = default_player_profile()
+    return current, next_opponent
+
+
+def fire_station(chips, slot=None, stats=None, profile=None):
     """火烧洋油站主逻辑"""
-    ai = FireStationAI()
-    ai_chips = 1000  # AI 初始筹码
+    fire_state = profile["fire_station"]
 
     while True:
+        fire_state = normalize_fire_station_state(fire_state)
+        profile["fire_station"] = fire_state
+        opponent = current_fire_opponent(fire_state)
+        ai = FireStationAI(
+            personality=opponent["personality"],
+            mood=fire_state.get("mood", opponent["mood"]),
+            player_profile=fire_state.get("player_profile"),
+            opponent_name=opponent["name"],
+            boss=opponent.get("boss", False),
+            cycle=fire_state.get("cycle", 0),
+        )
+        ai_chips = fire_state.get("ai_chips", opponent["chips"])
+
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored("\n  ── 火烧洋油站 ──\n", C.RED))
 
         if chips <= 0:
@@ -867,27 +1803,19 @@ def fire_station(chips, slot=None, stats=None):
             pause()
             return chips
 
-        if ai_chips <= 0:
-            print(colored("  庄家被你打空了！换一个庄家上场...", C.GREEN))
-            ai_chips = 1000
-            ai.__init__()
-            pause()
-
-        # 显示双方筹码
-        print(f"  你的筹码: {colored('$' + str(chips), C.GREEN)}")
-        print(f"  庄家筹码: {colored('$' + str(ai_chips), C.MAGENTA)}")
-
-        # AI 性格提示
-        personality_hints = {
-            "tight": "沉稳",
-            "loose": "豪放",
-            "tricky": "诡诈",
-        }
-        print(colored(f"  庄家风格: {personality_hints[ai.personality]}", C.DIM))
+        stage_text = f"第 {fire_state.get('cycle', 0) + 1} 周目"
+        boss_text = colored("Boss", C.YELLOW) if opponent.get("boss") else colored("常规桌", C.DIM)
+        print(f"  对手: {colored(opponent['name'], C.MAGENTA)}  {colored(opponent['title'], C.WHITE)}  {boss_text}")
+        print(f"  难度: {colored(stage_text, C.CYAN)}")
+        print(colored(f"  “{opponent['quote']}”", C.DIM))
         print()
 
-        # 选底注
-        tiers = [5, 10, 50]
+        print(f"  你的筹码: {colored('$' + str(chips), C.GREEN)}")
+        print(f"  庄家筹码: {colored('$' + str(ai_chips), C.MAGENTA)}")
+        print(colored(f"  庄家风格: {personality_name(ai.personality)}", C.DIM))
+        print()
+
+        tiers = [5, 10, 25, 50, 100]
         available = [t for t in tiers if t <= chips and t <= ai_chips]
         if not available:
             print(colored("  筹码不够最低底注了！", C.RED))
@@ -925,13 +1853,14 @@ def fire_station(chips, slot=None, stats=None):
         round_num = 0
         player_raises = 0
         ai_raises = 0
+        hand_operations = 0
         last_raiser = None  # 记录最后加注方
         game_over = False
 
-        # 玩家先看牌
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored(f"\n  ── 火烧洋油站 ── 底注: ${base_bet} ──\n", C.RED))
+        print(colored(f"  对手: {opponent['name']} / {opponent['title']}", C.MAGENTA))
         print(f"  底池: {colored('$' + str(pot), C.YELLOW)}")
         print()
         render_single_card(player_card, "你的牌:")
@@ -939,8 +1868,7 @@ def fire_station(chips, slot=None, stats=None):
         render_single_card(ai_card, "庄家的牌:", hidden=True)
         print()
 
-        # 玩家先行动
-        turn = "player"  # player / ai
+        turn = "player"
         while not game_over:
             round_num += 1
 
@@ -981,31 +1909,33 @@ def fire_station(chips, slot=None, stats=None):
                     pot += raise_amt
                     current_bet = raise_amt
                     player_raises += 1
+                    hand_operations += 1
                     last_raiser = "player"
                     turn = "ai"
 
-                    # 刷新画面
                     clear()
-                    header(chips, slot, stats)
+                    header(chips, slot, stats, profile)
                     print(colored(f"\n  ── 火烧洋油站 ── 底注: ${base_bet} ──\n", C.RED))
+                    print(colored(f"  对手: {opponent['name']} / {opponent['title']}", C.MAGENTA))
                     print(f"  底池: {colored('$' + str(pot), C.YELLOW)}")
                     print()
                     render_single_card(player_card, "你的牌:")
                     print()
                     render_single_card(ai_card, "庄家的牌:", hidden=True)
 
-                    print(colored(f"\n  你加注 ${raise_amt}！等待庄家决定...", C.CYAN))
+                    print(colored(f"\n  你加注 ${raise_amt}！等待 {opponent['name']} 决定...", C.CYAN))
                     pause()
 
                 elif action == 'C' and (last_raiser == "ai" or last_raiser is None):
-                    # 跟注/开牌
                     if last_raiser == "ai":
                         chips -= current_bet
                         pot += current_bet
+                    hand_operations += 1
                     game_over = True
                     winner = "showdown"
 
                 elif action == 'F':
+                    hand_operations += 1
                     game_over = True
                     winner = "ai_fold"  # 玩家弃牌
 
@@ -1014,7 +1944,6 @@ def fire_station(chips, slot=None, stats=None):
                     continue
 
             else:
-                # AI 回合
                 decision = ai.decide(ai_card, current_bet, pot, ai_chips,
                                      round_num, player_raises)
 
@@ -1028,15 +1957,16 @@ def fire_station(chips, slot=None, stats=None):
                     turn = "player"
 
                     clear()
-                    header(chips, slot, stats)
+                    header(chips, slot, stats, profile)
                     print(colored(f"\n  ── 火烧洋油站 ── 底注: ${base_bet} ──\n", C.RED))
+                    print(colored(f"  对手: {opponent['name']} / {opponent['title']}", C.MAGENTA))
                     print(f"  底池: {colored('$' + str(pot), C.YELLOW)}")
                     print()
                     render_single_card(player_card, "你的牌:")
                     print()
                     render_single_card(ai_card, "庄家的牌:", hidden=True)
 
-                    print(colored(f"\n  庄家加注 ${raise_amt}！", C.MAGENTA))
+                    print(colored(f"\n  {opponent['name']} 加注 ${raise_amt}！", C.MAGENTA))
 
                 elif decision == "call" and (last_raiser == "player" or last_raiser is None):
                     if last_raiser == "player":
@@ -1045,36 +1975,35 @@ def fire_station(chips, slot=None, stats=None):
                     game_over = True
                     winner = "showdown"
 
-                    print(colored("\n  庄家跟注！开牌！", C.MAGENTA))
+                    print(colored(f"\n  {opponent['name']} 跟注！开牌！", C.MAGENTA))
                     time.sleep(0.8)
 
                 elif decision == "fold":
                     game_over = True
                     winner = "player_fold"
 
-                    print(colored("\n  庄家弃牌！", C.MAGENTA))
+                    print(colored(f"\n  {opponent['name']} 弃牌！", C.MAGENTA))
                     time.sleep(0.8)
 
                 else:
-                    # fallback: call if possible, else fold
                     if (last_raiser == "player" or last_raiser is None) and ai_chips >= current_bet:
                         if last_raiser == "player":
                             ai_chips -= current_bet
                             pot += current_bet
                         game_over = True
                         winner = "showdown"
-                        print(colored("\n  庄家跟注！开牌！", C.MAGENTA))
+                        print(colored(f"\n  {opponent['name']} 跟注！开牌！", C.MAGENTA))
                         time.sleep(0.8)
                     else:
                         game_over = True
                         winner = "player_fold"
-                        print(colored("\n  庄家弃牌！", C.MAGENTA))
+                        print(colored(f"\n  {opponent['name']} 弃牌！", C.MAGENTA))
                         time.sleep(0.8)
 
-        # === 结算 ===
         clear()
-        header(chips, slot, stats)
+        header(chips, slot, stats, profile)
         print(colored(f"\n  ── 结算 ── 底池: ${pot} ──\n", C.RED))
+        print(colored(f"  对手: {opponent['name']} / {opponent['title']}", C.MAGENTA))
 
         if winner == "showdown":
             render_single_card(player_card, "你的牌:")
@@ -1114,13 +2043,12 @@ def fire_station(chips, slot=None, stats=None):
             ai.record_hand(False, player_raises, player_card)
 
         elif winner == "ai_fold":
-            # 玩家弃牌，底池归庄家
             print(colored("  你弃牌了。", C.RED))
             render_single_card(player_card, "你的牌:")
             print()
             render_single_card(ai_card, "庄家的牌:", hidden=True)
             ai_chips += pot
-            print(colored(f"\n  庄家赢得底池 ${pot}", C.MAGENTA))
+            print(colored(f"\n  {opponent['name']} 赢得底池 ${pot}", C.MAGENTA))
             ai.update_mood(True)
             ai.record_hand(True, player_raises)
             if stats:
@@ -1129,10 +2057,10 @@ def fire_station(chips, slot=None, stats=None):
 
         elif winner == "player_fold":
             chips += pot
-            print(colored("  庄家弃牌！你不战而胜！", C.GREEN))
+            print(colored(f"  {opponent['name']} 弃牌！你不战而胜！", C.GREEN))
             render_single_card(player_card, "你的牌:")
             print()
-            print(colored("  庄家的牌: [已弃]", C.DIM))
+            print(colored(f"  {opponent['name']} 的牌: [已弃]", C.DIM))
             print(colored(f"\n  你赢得底池 ${pot}", C.GREEN))
             ai.update_mood(False)
             ai.record_hand(False, player_raises)
@@ -1140,9 +2068,22 @@ def fire_station(chips, slot=None, stats=None):
                 stats["wins"] += 1
                 stats["total_bet"] += base_bet
 
-        if slot is not None and stats is not None:
-            auto_save(slot, chips, stats)
+        sync_fire_station_state(profile, ai, ai_chips)
+
+        if ai_chips <= 0:
+            defeated, next_opponent = advance_fire_station(profile, stats)
+            print()
+            if defeated.get("boss"):
+                print(colored(f"  ★ 你击败了 Boss {defeated['name']}！周目提升！", C.YELLOW))
+            else:
+                print(colored(f"  ✓ 你击败了 {defeated['name']}！下一位对手是 {next_opponent['name']}。", C.GREEN))
+
+        notices = record_operations(chips, stats, profile, max(1, hand_operations))
+        if slot is not None and stats is not None and profile is not None:
+            auto_save(slot, chips, stats, profile)
             print(colored("  [自动存档]", C.DIM))
+        for notice in notices:
+            print(notice)
 
         pause()
     return chips
@@ -1157,11 +2098,17 @@ def main():
     if result is None:
         print(colored("\n  再见！\n", C.YELLOW))
         return
-    chips, stats, active_slot = result
+    chips, stats, profile, active_slot = result
 
     while True:
+        refresh_career_status(chips, stats, profile)
+        if profile.get("retired"):
+            auto_save(active_slot, chips, stats, profile)
+            show_career_summary(chips, stats, profile, active_slot)
+            break
+
         clear()
-        header(chips, active_slot, stats)
+        header(chips, active_slot, stats, profile)
         print()
         menu = [
             colored("1", C.GREEN) + "  Blackjack (21点)",
@@ -1169,14 +2116,22 @@ def main():
             colored("3", C.GREEN) + "  Slots (老虎机)",
             colored("4", C.GREEN) + "  火烧洋油站",
             "",
+            colored("B", C.CYAN) + "  银行",
+            colored("G", C.YELLOW) + "  领取政府补贴",
             colored("S", C.CYAN) + "  战绩统计",
             colored("0", C.RED) + "  保存并离开",
         ]
         print(box(menu, width=36, title="游戏大厅", color=C.CYAN))
 
-        if chips <= 0:
-            print(colored("\n  你已经破产了...但这是虚拟赌场！", C.RED))
-            print(colored("  输入 R 重新开始，带 $1000 回来", C.YELLOW))
+        if chips <= 0 and profile.get("bank", 0) > 0:
+            print(colored("\n  你手上没现金了，可以去银行按安全比率取一些出来。", C.YELLOW))
+        if total_debt(profile) > 0:
+            print(colored(f"  当前贷款负债 ${total_debt(profile)}，距离下一次结息还差 {DAILY_OPERATION_COUNT - operation_progress(profile)} 步。", C.RED))
+        if can_claim_government_aid(chips, profile):
+            print(colored(f"  你符合补贴条件，可领取 ${GOVERNMENT_AID_AMOUNT}。", C.GREEN))
+        elif total_assets(chips, profile) <= 0:
+            left = MAX_GOVERNMENT_AID - profile.get("government_aid_used", 0)
+            print(colored(f"  净资产已归零。剩余政府补贴次数: {left}", C.RED if left == 0 else C.YELLOW))
 
         try:
             choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
@@ -1184,39 +2139,34 @@ def main():
             break
 
         if choice == '1':
-            chips = blackjack(chips, active_slot, stats)
+            chips = blackjack(chips, active_slot, stats, profile)
         elif choice == '2':
-            chips = craps(chips, active_slot, stats)
+            chips = craps(chips, active_slot, stats, profile)
         elif choice == '3':
-            chips = slots(chips, active_slot, stats)
+            chips = slots(chips, active_slot, stats, profile)
         elif choice == '4':
-            chips = fire_station(chips, active_slot, stats)
+            chips = fire_station(chips, active_slot, stats, profile)
+        elif choice == 'B':
+            chips = bank_menu(chips, active_slot, stats, profile)
+        elif choice == 'G':
+            chips = claim_government_aid(chips, active_slot, stats, profile)
         elif choice == 'S':
-            show_stats(chips, stats)
+            show_stats(chips, stats, profile)
         elif choice == '0':
-            auto_save(active_slot, chips, stats)
+            auto_save(active_slot, chips, stats, profile)
             clear()
             print(colored("\n  游戏已保存！感谢光临 Leo's Casino！", C.YELLOW))
-            print(colored(f"  你带走了 ${chips} 筹码。\n", C.GREEN if chips > 1000 else C.RED))
+            print(colored(f"  你带走了 ${chips} 现金，银行 ${profile.get('bank', 0)}，负债 ${total_debt(profile)}。\n",
+                          C.GREEN if total_assets(chips, profile) >= INITIAL_CHIPS else C.RED))
             break
-        elif choice == 'R' and chips <= 0:
-            chips = 1000
-            stats["wins"] = 0
-            stats["losses"] = 0
-            stats["pushes"] = 0
-            stats["blackjacks"] = 0
-            stats["total_bet"] = 0
-            stats["biggest_win"] = 0
-            auto_save(active_slot, chips, stats)
-            print(colored("  重新发放 $1000！祝你好运！", C.GREEN))
-            pause()
 
-
-def show_stats(chips, stats):
+def show_stats(chips, stats, profile):
     """显示战绩统计"""
     clear()
     total_games = stats.get("wins", 0) + stats.get("losses", 0) + stats.get("pushes", 0)
     win_rate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
+    assets = total_assets(chips, profile)
+    debt = total_debt(profile)
 
     lines = [
         f"总局数:     {colored(str(total_games), C.WHITE)}",
@@ -1229,10 +2179,25 @@ def show_stats(chips, stats):
         f"总下注:     {colored('$' + str(stats.get('total_bet', 0)), C.CYAN)}",
         f"最大单笔赢: {colored('$' + str(stats.get('biggest_win', 0)), C.GREEN)}",
         "",
-        f"当前筹码:   {colored(f'${chips}', C.GREEN if chips >= 1000 else C.RED)}",
-        f"盈亏:       {colored(f'${chips - 1000}', C.GREEN if chips >= 1000 else C.RED)}",
+        f"当前现金:   {colored(f'${chips}', C.GREEN if chips > 0 else C.RED)}",
+        f"银行余额:   {colored('$' + str(profile.get('bank', 0)), C.CYAN)}",
+        f"贷款负债:   {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}",
+        f"净资产:     {colored('$' + str(assets), C.GREEN if assets > 0 else C.RED)}",
+        f"资产峰值:   {colored('$' + str(profile.get('career_high_assets', INITIAL_CHIPS)), C.MAGENTA)}",
+        "",
+        f"存入总额:   {colored('$' + str(stats.get('bank_deposit_total', 0)), C.WHITE)}",
+        f"取出总额:   {colored('$' + str(stats.get('bank_withdraw_total', 0)), C.WHITE)}",
+        f"存款利息:   {colored('$' + str(stats.get('bank_interest_earned', 0)), C.GREEN)}",
+        f"借款总额:   {colored('$' + str(stats.get('loan_borrowed_total', 0)), C.YELLOW)}",
+        f"还款总额:   {colored('$' + str(stats.get('loan_repaid_total', 0)), C.CYAN)}",
+        f"贷款利息:   {colored('$' + str(stats.get('loan_interest_paid', 0)), C.RED)}",
+        f"补贴次数:   {colored(str(profile.get('government_aid_used', 0)), C.YELLOW)}/{MAX_GOVERNMENT_AID}",
+        f"Boss 击败:  {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
+        f"已过天数:   {colored(str(profile.get('bank_days_elapsed', 0)), C.WHITE)}",
+        f"操作计数:   {colored(str(stats.get('operations_count', 0)), C.WHITE)}",
+        f"盈亏:       {colored(f'${assets - INITIAL_CHIPS}', C.GREEN if assets >= INITIAL_CHIPS else C.RED)}",
     ]
-    print(box(lines, width=42, title="战绩统计", color=C.MAGENTA))
+    print(box(lines, width=46, title="战绩统计", color=C.MAGENTA))
     pause()
 
 if __name__ == "__main__":
