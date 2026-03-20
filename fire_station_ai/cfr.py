@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass, field
 import json
+import os
 from pathlib import Path
 import random
 import sys
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .env import Action, ActionType, FireStationEnv, Observation, Seat
+from .env import (
+    Action,
+    ActionType,
+    FireStationEnv,
+    FireStationState,
+    Observation,
+    PlayerProfile,
+    Seat,
+)
 from .naming import generate_codename
 from .policies import HeuristicPolicy, normalize_distribution, sample_action
 from .selfplay import run_match
@@ -52,16 +61,12 @@ def bucketize(value: float, boundaries: Sequence[float]) -> int:
     return len(boundaries)
 
 
-def cards_to_key(cards: Sequence[int]) -> str:
-    return f"{int(cards[0])}-{int(cards[1])}"
-
-
 def abstraction_key(observation: Observation) -> str:
     stack_pressure = observation.current_bet / max(observation.my_chips + observation.current_bet, 1)
     pot_pressure = observation.pot / max(observation.my_chips + observation.opponent_chips + observation.pot, 1)
     stack_ratio = observation.my_chips / max(observation.current_bet, 1)
     opp_stack_ratio = observation.opponent_chips / max(observation.current_bet, 1)
-    aggression_delta = max(-2, min(2, observation.opponent_raises - observation.my_raises))
+    aggression_delta = max(-1, min(1, observation.opponent_raises - observation.my_raises))
     last_raiser = "none"
     if observation.last_raiser == observation.seat:
         last_raiser = "self"
@@ -72,12 +77,12 @@ def abstraction_key(observation: Observation) -> str:
         [
             f"seat{int(observation.seat)}",
             f"rank{int(observation.private_rank)}",
-            f"round{_clamp_index(int(observation.round_num), 6)}",
-            f"spr{bucketize(stack_pressure, (0.08, 0.16, 0.28, 0.45, 0.70))}",
-            f"pot{bucketize(pot_pressure, (0.10, 0.20, 0.35, 0.50, 0.70))}",
-            f"stk{bucketize(stack_ratio, (1.2, 2.0, 4.0, 8.0, 16.0))}",
-            f"opp{bucketize(opp_stack_ratio, (1.2, 2.0, 4.0, 8.0, 16.0))}",
-            f"agg{aggression_delta + 2}",
+            f"round{_clamp_index(int(observation.round_num), 5)}",
+            f"spr{bucketize(stack_pressure, (0.10, 0.22, 0.40, 0.65))}",
+            f"pot{bucketize(pot_pressure, (0.12, 0.25, 0.45, 0.70))}",
+            f"stk{bucketize(stack_ratio, (1.5, 3.0, 6.0, 12.0))}",
+            f"opp{bucketize(opp_stack_ratio, (1.5, 3.0, 6.0, 12.0))}",
+            f"agg{aggression_delta + 1}",
             f"lr{last_raiser}",
         ]
     )
@@ -111,6 +116,42 @@ def default_action_prior(observation: Observation, legal_actions: Sequence[Actio
             weight = 0.10
         weights[action] = max(weight, 0.01)
     return normalize_distribution(weights)
+
+
+def _clone_profile(profile: PlayerProfile) -> PlayerProfile:
+    return PlayerProfile(
+        total_hands=int(profile.total_hands),
+        fold_count=int(profile.fold_count),
+        bluff_caught=int(profile.bluff_caught),
+        raise_freq=list(profile.raise_freq),
+        showdown_cards=list(profile.showdown_cards),
+    )
+
+
+def clone_env(env: FireStationEnv) -> FireStationEnv:
+    cloned = FireStationEnv(allow_credit_call_for=tuple(env.allow_credit_call_for))
+    state = env.state
+    if state is None:
+        cloned.state = None
+        return cloned
+    cloned.state = FireStationState(
+        base_bet=int(state.base_bet),
+        pot=int(state.pot),
+        current_bet=int(state.current_bet),
+        stacks=list(state.stacks),
+        initial_stacks=tuple(state.initial_stacks),
+        cards=tuple(state.cards),
+        to_act=None if state.to_act is None else Seat(state.to_act),
+        last_raiser=None if state.last_raiser is None else Seat(state.last_raiser),
+        round_num=int(state.round_num),
+        raises=list(state.raises),
+        terminal=bool(state.terminal),
+        winner=None if state.winner is None else Seat(state.winner),
+        win_reason=state.win_reason,
+        profiles=[_clone_profile(profile) for profile in state.profiles],
+        action_history=[dict(item) for item in state.action_history],
+    )
+    return cloned
 
 
 @dataclass
@@ -181,7 +222,7 @@ class CFRPolicy:
         prior = default_action_prior(observation, legal_actions)
         mixed: Dict[Action, float] = {}
         for action in legal_actions:
-            mixed[action] = blended.get(action, 0.0) * 0.90 + prior.get(action, 0.0) * 0.10
+            mixed[action] = blended.get(action, 0.0) * 0.92 + prior.get(action, 0.0) * 0.08
         return normalize_distribution(mixed)
 
     def act(self, observation: Observation, legal_actions: Sequence[Action], rng: random.Random) -> Action:
@@ -192,18 +233,87 @@ class CFRPolicy:
 class CFRTrainerConfig:
     iterations: int = 60
     checkpoint_interval: int = 10
-    hands_per_eval: int = 24
-    validation_hands: int = 40
-    eval_repeats: int = 1
-    validation_repeats: int = 1
+    hands_per_eval: int = 36
+    validation_hands: int = 60
+    eval_repeats: int = 2
+    validation_repeats: int = 2
     bet_set: Tuple[int, ...] = (10, 25)
     validation_bet_set: Tuple[int, ...] = (10, 25)
     stack_set: Tuple[int, ...] = (800, 1000, 1400)
     max_round_depth: int = 8
+    parallel_eval_workers: int = 0
     seed: int = 7
     output_dir: str = "fire_station_ai/runs"
     save_artifacts: bool = True
     show_progress: bool = True
+
+
+@dataclass(frozen=True)
+class _OpponentEvalResult:
+    label: str
+    scores: Tuple[float, ...]
+    wins: int
+    losses: int
+    ties: int
+    hands_played: int
+
+
+def _auto_worker_count(configured_workers: int, task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    if configured_workers > 0:
+        return min(configured_workers, task_count)
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(task_count, cpu_count - 1 if cpu_count > 2 else cpu_count))
+
+
+def _evaluate_single_opponent(
+    *,
+    label: str,
+    policy: CFRPolicy,
+    opponent: object,
+    hands: int,
+    bet_set: Sequence[int],
+    stack_set: Sequence[int],
+    repeats: int,
+    seed_base: int,
+) -> _OpponentEvalResult:
+    scores: List[float] = []
+    wins = 0
+    losses = 0
+    ties = 0
+    hands_played = 0
+
+    for bet_index, base_bet in enumerate(bet_set):
+        for stack_index, stack in enumerate(stack_set):
+            for repeat in range(repeats):
+                seed = seed_base + bet_index * 211 + stack_index * 59 + repeat * 23
+                result = run_match(
+                    policy,
+                    opponent,
+                    hands=hands,
+                    base_bet=base_bet,
+                    starting_stacks=(stack, stack),
+                    seed=seed,
+                )
+                scores.append(result.bankroll_delta[0] / max(hands, 1))
+                wins += result.seat0_wins
+                losses += result.seat1_wins
+                ties += result.ties
+                hands_played += result.hands_played
+
+    return _OpponentEvalResult(
+        label=label,
+        scores=tuple(scores),
+        wins=wins,
+        losses=losses,
+        ties=ties,
+        hands_played=hands_played,
+    )
+
+
+def _evaluate_single_opponent_worker(payload: Dict[str, Any]) -> _OpponentEvalResult:
+    return _evaluate_single_opponent(**payload)
 
 
 class CFRTrainer:
@@ -243,10 +353,17 @@ class CFRTrainer:
 
             if iteration % checkpoint_every == 0 or iteration == 1 or iteration == self.config.iterations:
                 policy = self.build_average_policy()
-                training = self._evaluate_policy(policy, self.config.hands_per_eval, self.config.bet_set, self.config.eval_repeats)
+                training = self._evaluate_policy(
+                    policy,
+                    self.config.hands_per_eval,
+                    self.config.bet_set,
+                    self.config.eval_repeats,
+                )
                 validation = self._validate_policy(policy)
+                checkpoint_rank = self._checkpoint_rank(training, validation)
                 improved = False
-                if self.best_checkpoint is None or validation["score_per_scheduled_hand"] > self.best_checkpoint["validation"]["score_per_scheduled_hand"]:
+
+                if self.best_checkpoint is None or checkpoint_rank > self.best_checkpoint["rank"]:
                     improved = True
                     model_name = generate_codename(self.rng, used=used_codenames)
                     used_codenames.add(model_name)
@@ -256,11 +373,16 @@ class CFRTrainer:
                         "policy": policy,
                         "training": training,
                         "validation": validation,
+                        "rank": checkpoint_rank,
+                        "info_set_count": len(self.nodes),
+                        "strategy_table_size": len(policy.strategy_table),
                     }
+
                 history.append(
                     {
                         "iteration": iteration,
                         "info_set_count": len(self.nodes),
+                        "strategy_table_size": len(policy.strategy_table),
                         "training_score": training["score"],
                         "training_win_rate": training["win_rate"],
                         "validation_score": validation["score_per_scheduled_hand"],
@@ -288,6 +410,9 @@ class CFRTrainer:
                 "policy": policy,
                 "training": training,
                 "validation": validation,
+                "rank": self._checkpoint_rank(training, validation),
+                "info_set_count": len(self.nodes),
+                "strategy_table_size": len(policy.strategy_table),
             }
 
         best_policy = self.best_checkpoint["policy"]
@@ -300,17 +425,20 @@ class CFRTrainer:
             "config": asdict(self.config),
             "model_name": self.best_checkpoint["model_name"],
             "best_checkpoint_iteration": self.best_checkpoint["iteration"],
+            "best_checkpoint_rank": list(self.best_checkpoint["rank"]),
             "best_training_score": best_training["score"],
             "best_training_win_rate": best_training["win_rate"],
             "best_training_breakdown": best_training["per_opponent"],
             "validation": best_validation,
             "history": history,
-            "info_set_count": len(self.nodes),
-            "average_strategy_table_size": len(best_policy.strategy_table),
+            "final_info_set_count": len(self.nodes),
+            "best_checkpoint_info_set_count": self.best_checkpoint["info_set_count"],
+            "average_strategy_table_size": self.best_checkpoint["strategy_table_size"],
             "action_guide": ACTION_GUIDE,
             "abstraction_notes_zh": [
                 "CFR 按抽样发牌进行自博弈，每次只训练一手牌的博弈树。",
                 "信息集使用手牌、回合、下注压力、底池压力和加注差做离散抽象。",
+                "最佳检查点优先比较验证分，再比较验证胜率和训练分，减少被偶然波动误导。",
                 "运行时会使用平均策略表，并混入少量先验，避免遇到冷门状态完全失真。",
             ],
         }
@@ -373,7 +501,7 @@ class CFRTrainer:
 
         for action in legal_actions:
             action_key = action_to_key(action)
-            next_env = deepcopy(env)
+            next_env = clone_env(env)
             next_env.step(action, acting)
             if acting == Seat.PLAYER:
                 utility = self._cfr(next_env, reach0 * strategy[action_key], reach1)
@@ -397,7 +525,7 @@ class CFRTrainer:
 
         return node_utility
 
-    def _showdown_utility(self, state) -> float:
+    def _showdown_utility(self, state: FireStationState) -> float:
         player_rank = state.cards[Seat.PLAYER]
         opponent_rank = state.cards[Seat.OPPONENT]
         if player_rank > opponent_rank:
@@ -406,6 +534,14 @@ class CFRTrainer:
             return float(-state.pot)
         return 0.0
 
+    def _checkpoint_rank(self, training: Dict[str, Any], validation: Dict[str, Any]) -> Tuple[float, float, float, float]:
+        return (
+            round(float(validation["score_per_scheduled_hand"]), 6),
+            round(float(validation["win_rate"]), 6),
+            round(float(training["score"]), 6),
+            round(float(training["win_rate"]), 6),
+        )
+
     def _evaluate_policy(
         self,
         policy: CFRPolicy,
@@ -413,51 +549,51 @@ class CFRTrainer:
         bet_set: Sequence[int],
         repeats: int,
     ) -> Dict[str, Any]:
+        payloads = []
+        for opponent_index, (label, opponent) in enumerate(BASE_OPPONENT_POOL):
+            payloads.append(
+                {
+                    "label": label,
+                    "policy": policy,
+                    "opponent": opponent,
+                    "hands": hands,
+                    "bet_set": tuple(bet_set),
+                    "stack_set": tuple(self.config.stack_set),
+                    "repeats": repeats,
+                    "seed_base": self.config.seed + 7001 + opponent_index * 89,
+                }
+            )
+
+        worker_count = _auto_worker_count(self.config.parallel_eval_workers, len(payloads))
+        if worker_count > 1:
+            with ProcessPoolExecutor(max_workers=worker_count) as executor:
+                opponent_results = list(executor.map(_evaluate_single_opponent_worker, payloads))
+        else:
+            opponent_results = [_evaluate_single_opponent_worker(payload) for payload in payloads]
+
         scores = []
-        per_opponent = {}
+        per_opponent: Dict[str, Dict[str, Any]] = {}
         total_wins = 0
         total_losses = 0
         total_ties = 0
 
-        for opponent_index, (label, opponent) in enumerate(BASE_OPPONENT_POOL):
-            opponent_scores = []
-            opponent_wins = 0
-            opponent_losses = 0
-            opponent_ties = 0
-            opponent_hands = 0
-
-            for bet_index, base_bet in enumerate(bet_set):
-                for repeat in range(repeats):
-                    stack = self.rng.choice(self.config.stack_set)
-                    result = run_match(
-                        policy,
-                        opponent,
-                        hands=hands,
-                        base_bet=base_bet,
-                        starting_stacks=(stack, stack),
-                        seed=self.config.seed + 7001 + opponent_index * 89 + bet_index * 211 + repeat * 23,
-                    )
-                    score = result.bankroll_delta[0] / max(hands, 1)
-                    opponent_scores.append(score)
-                    opponent_wins += result.seat0_wins
-                    opponent_losses += result.seat1_wins
-                    opponent_ties += result.ties
-                    opponent_hands += result.hands_played
-
-            mean_score = sum(opponent_scores) / max(len(opponent_scores), 1)
-            per_opponent[label] = {
+        for result in opponent_results:
+            mean_score = sum(result.scores) / max(len(result.scores), 1)
+            per_opponent[result.label] = {
                 "score_per_scheduled_hand": mean_score,
-                "wins": opponent_wins,
-                "losses": opponent_losses,
-                "ties": opponent_ties,
-                "hands_played": opponent_hands,
+                "wins": result.wins,
+                "losses": result.losses,
+                "ties": result.ties,
+                "hands_played": result.hands_played,
                 "repeats": repeats,
                 "bet_set": list(bet_set),
+                "stack_set": list(self.config.stack_set),
+                "samples": len(result.scores),
             }
             scores.append(mean_score)
-            total_wins += opponent_wins
-            total_losses += opponent_losses
-            total_ties += opponent_ties
+            total_wins += result.wins
+            total_losses += result.losses
+            total_ties += result.ties
 
         total_hands = total_wins + total_losses + total_ties
         return {
@@ -471,42 +607,31 @@ class CFRTrainer:
 
     def _validate_policy(self, policy: CFRPolicy) -> Dict[str, Any]:
         opponent = HeuristicPolicy(personality="tricky", mood=0.62, boss=True, cycle=1)
-        scores = []
-        wins = 0
-        losses = 0
-        ties = 0
-        hands_played = 0
-        bankroll_delta = 0
-
-        for bet_index, base_bet in enumerate(self.config.validation_bet_set):
-            for repeat in range(self.config.validation_repeats):
-                stack = self.rng.choice(self.config.stack_set)
-                result = run_match(
-                    policy,
-                    opponent,
-                    hands=self.config.validation_hands,
-                    base_bet=base_bet,
-                    starting_stacks=(stack, stack),
-                    seed=self.config.seed + 17001 + bet_index * 313 + repeat * 29,
-                )
-                scores.append(result.bankroll_delta[0] / max(self.config.validation_hands, 1))
-                wins += result.seat0_wins
-                losses += result.seat1_wins
-                ties += result.ties
-                hands_played += result.hands_played
-                bankroll_delta += result.bankroll_delta[0]
-
+        result = _evaluate_single_opponent(
+            label="validation_boss",
+            policy=policy,
+            opponent=opponent,
+            hands=self.config.validation_hands,
+            bet_set=self.config.validation_bet_set,
+            stack_set=self.config.stack_set,
+            repeats=self.config.validation_repeats,
+            seed_base=self.config.seed + 17001,
+        )
+        score = sum(result.scores) / max(len(result.scores), 1)
+        total_hands = result.wins + result.losses + result.ties
+        bankroll_delta = int(round(sum(result.scores) * self.config.validation_hands))
         return {
-            "score_per_scheduled_hand": sum(scores) / max(len(scores), 1),
-            "win_rate": wins / max(hands_played, 1),
-            "wins": wins,
-            "losses": losses,
-            "ties": ties,
-            "hands": hands_played,
+            "score_per_scheduled_hand": score,
+            "win_rate": result.wins / max(total_hands, 1),
+            "wins": result.wins,
+            "losses": result.losses,
+            "ties": result.ties,
+            "hands": result.hands_played,
             "bankroll_delta": bankroll_delta,
             "bet_set": list(self.config.validation_bet_set),
             "stack_set": list(self.config.stack_set),
             "repeats": self.config.validation_repeats,
+            "samples": len(result.scores),
         }
 
     def _build_auto_commentary(self, summary: Dict[str, Any]) -> List[str]:
@@ -519,21 +644,19 @@ class CFRTrainer:
         elif summary["best_training_score"] > 0:
             lines.append("它已经能针对训练池稳定赚钱，但验证还偏弱，说明策略表还不够成熟。")
         else:
-            lines.append("当前平均策略还没有在训练池建立优势，通常说明迭代轮数还不够。")
+            lines.append("当前平均策略还没有在训练池建立稳定优势，建议继续增加迭代并扩大评估样本。")
 
-        if summary["info_set_count"] < 300:
-            lines.append("当前信息集数量还比较少，抽象比较粗，训练会快但上限也更容易提前碰到。")
-        elif summary["info_set_count"] > 1200:
-            lines.append("这次信息集已经比较丰富，说明模型开始覆盖更多下注压力和筹码场景。")
+        if summary["average_strategy_table_size"] < 300:
+            lines.append("当前策略表还比较小，说明模型刚起步，速度快但泛化能力还有限。")
+        elif summary["average_strategy_table_size"] > 1800:
+            lines.append("这次策略表已经覆盖了不少局面，说明模型开始学到更细的下注压力差异。")
         else:
-            lines.append("信息集规模适中，属于兼顾速度和泛化的表格策略。")
+            lines.append("策略表规模适中，属于兼顾速度和泛化的表格策略。")
 
         weakest_name = min(best_breakdown, key=lambda name: best_breakdown[name]["score_per_scheduled_hand"])
         strongest_name = max(best_breakdown, key=lambda name: best_breakdown[name]["score_per_scheduled_hand"])
-        lines.append(
-            f"训练池里它最怕的是 {weakest_name}，最能压制的是 {strongest_name}。"
-        )
-        lines.append("如果你想继续拔高，优先加大 `--iterations`，其次增加 `--stack-set` 和 `--validation-bet-set` 的覆盖范围。")
+        lines.append(f"训练池里它最怕的是 {weakest_name}，最能压制的是 {strongest_name}。")
+        lines.append("这版评估已经覆盖全部 stack_set，而不是每次随机抽一个筹码档位，所以曲线会更稳一些。")
         return lines
 
     def _write_artifacts(self, summary: Dict[str, Any], policy: CFRPolicy) -> Path:
@@ -551,7 +674,8 @@ class CFRTrainer:
             "algorithm": summary["algorithm"],
             "model_name": summary["model_name"],
             "best_checkpoint_iteration": summary["best_checkpoint_iteration"],
-            "info_set_count": summary["info_set_count"],
+            "best_checkpoint_info_set_count": summary["best_checkpoint_info_set_count"],
+            "average_strategy_table_size": summary["average_strategy_table_size"],
             "action_guide": ACTION_GUIDE,
             "strategy_table": policy.strategy_table,
         }

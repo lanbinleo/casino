@@ -14,6 +14,10 @@
   CFR / regret matching 训练核心与策略表运行时。
 - `cfr_train.py`
   CFR / regret matching 训练入口。
+- `arena.py`
+  让保存模型两两对打并导出排行榜 JSON。
+- `arena_viewer.html`
+  静态 Arena 看板，直接读取 `arena.json`。
 - `runtime.py`
   读取保存模型，并把动作桥接回 `casino.py`。
 - `naming.py`
@@ -33,6 +37,12 @@ CFR / regret matching：
 
 ```bash
 python -m fire_station_ai.cfr_train --preset balanced
+```
+
+Arena 排行榜：
+
+```bash
+python -m fire_station_ai.arena --top 6
 ```
 
 快速试跑：
@@ -107,6 +117,8 @@ python -m fire_station_ai.cfr_train ^
   验证底注集合。
 - `--stack-set`
   训练时采样的筹码集合。
+- `--workers`
+  评估并行进程数，`0` 代表自动。
 
 ## 参数建议
 
@@ -116,6 +128,7 @@ python -m fire_station_ai.cfr_train ^
 - 进化式冠军长期不变：提高 `--random-injection` 或 `--mutation-sigma`。
 - CFR 曲线太早停滞：优先增加 `--iterations`。
 - 结果波动太大：提高 `--eval-repeats` 和 `--validation-repeats`。
+- 想利用 CPU 并行：给 CFR 或 Arena 传 `--workers 0` 或显式进程数。
 
 ## 输出文件
 
@@ -127,6 +140,8 @@ python -m fire_station_ai.cfr_train ^
   可被运行时加载的策略文件。
 - `insight_zh.txt`
   自动中文解读。
+- `arena.json`
+  Arena 两两对打排行榜与明细。
 
 保存出来的模型会带一个中文代号，Casino 里会直接显示这个名字。
 
@@ -145,10 +160,51 @@ python -m fire_station_ai.cfr_train ^
 
 训练模型保存在 `fire_station_ai/runs/` 下时，`casino.py` 会通过 `runtime.py` 自动发现并加载。
 
+## Arena 用法
+
+默认取最新模型：
+
+```bash
+python -m fire_station_ai.arena --top 6
+```
+
+指定模型代号关键词：
+
+```bash
+python -m fire_station_ai.arena --models 暗牌,皇家,弃牌
+```
+
+常用参数：
+
+- `--hands`
+  每组对打计划手数。
+- `--repeats`
+  每组重复次数。
+- `--bet-set`
+  Arena 使用的底注集合。
+- `--stack-set`
+  Arena 使用的筹码集合。
+- `--workers`
+  并行进程数，`0` 代表自动。
+- `--top`
+  直接取最新的前 N 个模型。
+- `--models`
+  按代号或路径关键词筛选模型。
+
+Arena 跑完后会生成：
+
+- `fire_station_ai/runs/arena_.../arena.json`
+
+静态查看页：
+
+- 打开 [arena_viewer.html](/d:/Desktop/BoringGame/fire_station_ai/arena_viewer.html)
+- 或在浏览器访问 `fire_station_ai/arena_viewer.html?json=fire_station_ai/runs/arena_xxx/arena.json`
+
 ## 验证命令
 
 ```bash
 python -m compileall casino.py fire_station_ai
 python -m fire_station_ai.train --preset quick
 python -m fire_station_ai.cfr_train --preset quick
+python -m fire_station_ai.arena --top 4 --hands 20 --repeats 1
 ```

@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fire Station Arena</title>
+  <style>
+    :root {
+      --bg: #15110c;
+      --panel: rgba(29, 22, 17, 0.88);
+      --panel-soft: rgba(45, 34, 24, 0.66);
+      --line: rgba(246, 204, 143, 0.18);
+      --text: #f7edd9;
+      --muted: #c9b58f;
+      --accent: #f29f58;
+      --accent-2: #ffe3a1;
+      --good: #9fd39d;
+      --bad: #f29a8f;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(242, 159, 88, 0.20), transparent 34%),
+        radial-gradient(circle at top right, rgba(255, 227, 161, 0.10), transparent 28%),
+        linear-gradient(160deg, #120e09 0%, #1c140e 45%, #0c0907 100%);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 28px auto 44px;
+    }
+
+    .hero {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(160deg, rgba(41, 30, 21, 0.92), rgba(20, 15, 11, 0.88));
+      box-shadow: var(--shadow);
+    }
+
+    .eyebrow {
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent-2);
+      font-size: 12px;
+    }
+
+    h1 {
+      margin: 10px 0 8px;
+      font-size: clamp(30px, 4vw, 54px);
+      line-height: 1.02;
+      font-weight: 750;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      max-width: 760px;
+      font-size: 15px;
+      line-height: 1.7;
+      margin: 0;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 22px;
+    }
+
+    input, button {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      font: inherit;
+    }
+
+    input {
+      flex: 1 1 420px;
+      min-width: 220px;
+      padding: 14px 16px;
+      background: rgba(15, 11, 8, 0.85);
+      color: var(--text);
+    }
+
+    button {
+      padding: 14px 18px;
+      background: linear-gradient(135deg, var(--accent), #e46c36);
+      color: #1f140d;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .meta .card {
+      padding: 16px 18px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .value {
+      margin-top: 8px;
+      font-size: 26px;
+      font-weight: 720;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .panel-body {
+      padding: 18px 20px 22px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 12px 10px;
+      text-align: left;
+      border-bottom: 1px solid rgba(246, 204, 143, 0.10);
+      font-size: 14px;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    tbody tr:hover {
+      background: rgba(255, 227, 161, 0.03);
+    }
+
+    .positive { color: var(--good); }
+    .negative { color: var(--bad); }
+
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
+      color: var(--accent-2);
+      font-size: 12px;
+    }
+
+    .empty, .error {
+      margin-top: 16px;
+      padding: 18px 20px;
+      border-radius: 16px;
+      border: 1px dashed var(--line);
+      background: rgba(16, 12, 9, 0.55);
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .error {
+      color: var(--bad);
+      border-style: solid;
+    }
+
+    .match-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .match-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: var(--panel-soft);
+      border: 1px solid rgba(246, 204, 143, 0.10);
+    }
+
+    .match-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .mono {
+      font-family: Consolas, "SFMono-Regular", monospace;
+    }
+
+    @media (max-width: 960px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Fire Station Arena</div>
+      <h1>模型两两对打排行榜</h1>
+      <p class="subtitle">把 `python -m fire_station_ai.arena` 生成的 `arena.json` 路径填进来，页面会读取 JSON 并展示排行榜、对打结果和基础配置。你也可以通过 URL 传参：`?json=fire_station_ai/runs/arena_seed7_models4/arena.json`。</p>
+      <div class="toolbar">
+        <input id="json-path" type="text" placeholder="例如：fire_station_ai/runs/arena_seed7_models4/arena.json">
+        <button id="load-btn" type="button">读取 Arena</button>
+      </div>
+      <div id="status" class="empty">等待载入 Arena JSON。</div>
+      <div id="meta" class="meta" hidden></div>
+    </section>
+
+    <section class="grid" id="content" hidden>
+      <article class="card">
+        <div class="panel-head">
+          <h2>排行榜</h2>
+          <span class="pill" id="standings-count">0 名模型</span>
+        </div>
+        <div class="panel-body">
+          <table>
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>模型</th>
+                <th>积分</th>
+                <th>EV/手</th>
+                <th>手胜率</th>
+                <th>对打</th>
+              </tr>
+            </thead>
+            <tbody id="standings-body"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="panel-head">
+          <h2>对打明细</h2>
+          <span class="pill" id="match-count">0 场</span>
+        </div>
+        <div class="panel-body">
+          <div id="matches" class="match-grid"></div>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const metaEl = document.getElementById("meta");
+    const contentEl = document.getElementById("content");
+    const inputEl = document.getElementById("json-path");
+    const standingsBodyEl = document.getElementById("standings-body");
+    const matchesEl = document.getElementById("matches");
+    const standingsCountEl = document.getElementById("standings-count");
+    const matchCountEl = document.getElementById("match-count");
+
+    function formatSigned(value, digits = 3) {
+      const fixed = Number(value || 0).toFixed(digits);
+      return Number(value || 0) >= 0 ? `+${fixed}` : fixed;
+    }
+
+    function classForSigned(value) {
+      if (value > 0) return "positive";
+      if (value < 0) return "negative";
+      return "";
+    }
+
+    function renderMeta(summary) {
+      const cards = [
+        ["生成时间", summary.generated_at || "-"],
+        ["模型数量", `${summary.model_count || 0}`],
+        ["对打场次", `${summary.match_count || 0}`],
+        ["底注集合", (summary.config?.bet_set || []).join(", ") || "-"],
+        ["筹码集合", (summary.config?.stack_set || []).join(", ") || "-"],
+        ["每组计划手数", `${summary.config?.hands || 0}`],
+      ];
+      metaEl.innerHTML = cards.map(([label, value]) => `
+        <div class="card">
+          <div class="label">${label}</div>
+          <div class="value mono">${value}</div>
+        </div>
+      `).join("");
+      metaEl.hidden = false;
+    }
+
+    function renderStandings(summary) {
+      const standings = summary.standings || [];
+      standingsCountEl.textContent = `${standings.length} 名模型`;
+      standingsBodyEl.innerHTML = standings.map((row) => `
+        <tr>
+          <td class="mono">#${row.rank}</td>
+          <td>
+            <div>${row.codename}</div>
+            <div class="label">${row.policy_type} · ${row.run_name || ""}</div>
+          </td>
+          <td class="mono">${row.match_points}</td>
+          <td class="mono ${classForSigned(row.ev_per_hand)}">${formatSigned(row.ev_per_hand)}</td>
+          <td class="mono">${(Number(row.hand_win_rate || 0) * 100).toFixed(1)}%</td>
+          <td class="mono">${row.match_wins}W ${row.match_losses}L ${row.match_draws}D</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderMatches(summary) {
+      const matches = summary.matches || [];
+      matchCountEl.textContent = `${matches.length} 场`;
+      matchesEl.innerHTML = matches.map((match) => {
+        const winnerText = match.winner === "a"
+          ? `${match.model_a_codename} 胜`
+          : match.winner === "b"
+            ? `${match.model_b_codename} 胜`
+            : "平局";
+        return `
+          <div class="match-item">
+            <div class="match-title">
+              <strong>${match.model_a_codename} vs ${match.model_b_codename}</strong>
+              <span class="pill">${winnerText}</span>
+            </div>
+            <div class="mono ${classForSigned(match.score_a)}">${match.model_a_codename}: ${formatSigned(match.score_a)} EV/手</div>
+            <div class="mono ${classForSigned(match.score_b)}">${match.model_b_codename}: ${formatSigned(match.score_b)} EV/手</div>
+            <div class="label">手级战绩 ${match.wins_a}W ${match.losses_a}L ${match.ties}T / 计划 ${match.scheduled_hands} 手 / 实打 ${match.actual_hands_played} 手</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function loadArena(path) {
+      if (!path) {
+        statusEl.className = "empty";
+        statusEl.textContent = "请输入 arena.json 路径。";
+        return;
+      }
+      statusEl.className = "empty";
+      statusEl.textContent = "正在读取中...";
+      contentEl.hidden = true;
+      metaEl.hidden = true;
+
+      try {
+        const response = await fetch(path, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const summary = await response.json();
+        renderMeta(summary);
+        renderStandings(summary);
+        renderMatches(summary);
+        statusEl.className = "empty";
+        statusEl.textContent = `已读取：${path}`;
+        contentEl.hidden = false;
+      } catch (error) {
+        statusEl.className = "error";
+        statusEl.textContent = `读取失败：${error.message}`;
+      }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const initialPath = params.get("json") || "";
+    if (initialPath) {
+      inputEl.value = initialPath;
+      loadArena(initialPath);
+    }
+
+    document.getElementById("load-btn").addEventListener("click", () => {
+      loadArena(inputEl.value.trim());
+    });
+  </script>
+</body>
+</html>
