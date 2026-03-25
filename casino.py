@@ -11,7 +11,7 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.1.2"
+GAME_VERSION = "v1.2.0"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
@@ -28,6 +28,62 @@ LOAN_TIERS = [
     {"name": "一档", "daily_rate": 0.0035},
     {"name": "二档", "daily_rate": 0.0055},
     {"name": "三档", "daily_rate": 0.0080},
+]
+LOCATIONS = {
+    "home": "家里",
+    "casino": "赌场",
+    "bank": "银行",
+    "pawnshop": "典当行",
+}
+ASSET_MARKETS = [
+    {
+        "id": "city_bonds",
+        "name": "旧城债票",
+        "tag": "稳健",
+        "base_price": 120,
+        "drift": 0.002,
+        "volatility": 0.015,
+        "yield_rate": 0.0015,
+        "floor": 90,
+        "ceiling": 165,
+        "desc": "像比银行更灵活一点的慢收益票据。",
+    },
+    {
+        "id": "vending_route",
+        "name": "售货机点位",
+        "tag": "经营",
+        "base_price": 80,
+        "drift": 0.001,
+        "volatility": 0.040,
+        "yield_rate": 0.0032,
+        "floor": 45,
+        "ceiling": 145,
+        "desc": "现金流不错，但偶尔会停电、卡货、被人顺走两瓶汽水。",
+    },
+    {
+        "id": "pawn_notes",
+        "name": "典当凭单",
+        "tag": "经营",
+        "base_price": 140,
+        "drift": 0.003,
+        "volatility": 0.050,
+        "yield_rate": 0.0024,
+        "floor": 85,
+        "ceiling": 220,
+        "desc": "和街区资金周转挂钩，回报稳定但不算安静。",
+    },
+    {
+        "id": "lamp_oil",
+        "name": "洋油期货",
+        "tag": "投机",
+        "base_price": 100,
+        "drift": 0.000,
+        "volatility": 0.100,
+        "yield_rate": 0.0000,
+        "floor": 35,
+        "ceiling": 260,
+        "desc": "纯看情绪和传闻，涨得快，跌起来也快。",
+    },
 ]
 
 
@@ -66,6 +122,11 @@ def default_stats():
         "government_aid_taken": 0,
         "bosses_defeated": 0,
         "operations_count": 0,
+        "asset_trade_count": 0,
+        "asset_buy_total": 0,
+        "asset_sell_total": 0,
+        "asset_realized_profit": 0,
+        "asset_passive_income": 0,
         "games": {
             "blackjack": {"plays": 0, "wins": 0, "losses": 0, "pushes": 0, "net": 0, "biggest_win": 0, "special": 0},
             "craps": {"plays": 0, "wins": 0, "losses": 0, "pushes": 0, "net": 0, "biggest_win": 0, "special": 0},
@@ -155,8 +216,28 @@ def default_fire_station_state():
     }
 
 
+def default_asset_state(asset):
+    return {
+        "price": asset["base_price"],
+        "history": [asset["base_price"]],
+        "shares": 0,
+        "avg_cost": 0.0,
+        "realized_profit": 0,
+        "passive_income_total": 0,
+        "short_shares": 0,
+        "short_avg_cost": 0.0,
+    }
+
+
+def default_pawnshop_state():
+    return {
+        "assets": {asset["id"]: default_asset_state(asset) for asset in ASSET_MARKETS},
+    }
+
+
 def default_profile():
     return {
+        "location": "home",
         "bank": 0,
         "bank_ratio": 0.5,
         "loans": [{"balance": 0} for _ in LOAN_TIERS],
@@ -179,6 +260,7 @@ def default_profile():
         "runner": {
             "last_day": -1,
         },
+        "pawnshop": default_pawnshop_state(),
     }
 
 
@@ -216,6 +298,58 @@ def normalize_loans(loans):
                 base[idx]["balance"] = max(0, safe_int(loan.get("balance", 0), 0))
             else:
                 base[idx]["balance"] = max(0, safe_int(loan, 0))
+    return base
+
+
+def asset_definitions():
+    return ASSET_MARKETS
+
+
+def asset_definition_map():
+    return {asset["id"]: asset for asset in ASSET_MARKETS}
+
+
+def normalize_asset_state(asset_id, asset_state):
+    asset = asset_definition_map()[asset_id]
+    base = default_asset_state(asset)
+    if isinstance(asset_state, dict):
+        for key, value in asset_state.items():
+            if key == "history" and isinstance(value, list):
+                cleaned = [max(1, safe_int(item, asset["base_price"])) for item in value[-8:]]
+                base["history"] = cleaned or [asset["base_price"]]
+            elif key in {"avg_cost", "short_avg_cost"}:
+                base[key] = max(0.0, safe_float(value, 0.0))
+            else:
+                base[key] = value
+    base["price"] = max(asset["floor"], min(asset["ceiling"], safe_int(base.get("price", asset["base_price"]), asset["base_price"])))
+    base["shares"] = max(0, safe_int(base.get("shares", 0), 0))
+    base["avg_cost"] = max(0.0, safe_float(base.get("avg_cost", 0.0), 0.0))
+    base["realized_profit"] = safe_int(base.get("realized_profit", 0), 0)
+    base["passive_income_total"] = max(0, safe_int(base.get("passive_income_total", 0), 0))
+    base["short_shares"] = max(0, safe_int(base.get("short_shares", 0), 0))
+    base["short_avg_cost"] = max(0.0, safe_float(base.get("short_avg_cost", 0.0), 0.0))
+    history = [max(asset["floor"], min(asset["ceiling"], safe_int(item, base["price"]))) for item in base.get("history", [])[-8:]]
+    if not history:
+        history = [base["price"]]
+    history[-1] = base["price"]
+    base["history"] = history
+    return base
+
+
+def normalize_pawnshop_state(state):
+    base = default_pawnshop_state()
+    raw_assets = state.get("assets") if isinstance(state, dict) else None
+    if isinstance(raw_assets, dict):
+        for asset in ASSET_MARKETS:
+            asset_id = asset["id"]
+            if asset_id in raw_assets:
+                base["assets"][asset_id] = normalize_asset_state(asset_id, raw_assets[asset_id])
+    elif isinstance(state, dict):
+        # Forward-compatible fallback for older flat structures.
+        for asset in ASSET_MARKETS:
+            asset_id = asset["id"]
+            if asset_id in state:
+                base["assets"][asset_id] = normalize_asset_state(asset_id, state[asset_id])
     return base
 
 
@@ -268,12 +402,18 @@ def normalize_profile(profile):
                 base["fire_station"] = normalize_fire_station_state(value)
             elif key == "runner" and isinstance(value, dict):
                 base["runner"].update(value)
+            elif key == "pawnshop":
+                base["pawnshop"] = normalize_pawnshop_state(value)
             elif key == "loans":
                 base["loans"] = normalize_loans(value)
             elif key == "history" and isinstance(value, list):
                 base["history"] = value
             else:
                 base[key] = value
+    location = str(base.get("location", "home") or "home").lower()
+    if location not in LOCATIONS:
+        location = "home"
+    base["location"] = location
     base["bank_ratio"] = min(MAX_BANK_RATIO, max(MIN_BANK_RATIO, safe_float(base.get("bank_ratio", 0.5), 0.5)))
     base["bank"] = max(0, safe_int(base.get("bank", 0), 0))
     base["operation_count"] = max(0, safe_int(base.get("operation_count", 0), 0))
@@ -286,11 +426,27 @@ def normalize_profile(profile):
     base["runner"]["last_day"] = safe_int(base["runner"].get("last_day", -1), -1)
     base["loans"] = normalize_loans(base.get("loans"))
     base["fire_station"] = normalize_fire_station_state(base["fire_station"])
+    base["pawnshop"] = normalize_pawnshop_state(base["pawnshop"])
     return base
 
 
+def market_asset_state(profile, asset_id):
+    assets = profile.setdefault("pawnshop", default_pawnshop_state()).setdefault("assets", {})
+    if asset_id not in assets:
+        assets[asset_id] = default_asset_state(asset_definition_map()[asset_id])
+    return assets[asset_id]
+
+
+def market_value(profile):
+    total = 0
+    for asset in ASSET_MARKETS:
+        state = market_asset_state(profile, asset["id"])
+        total += safe_int(state.get("shares", 0), 0) * safe_int(state.get("price", asset["base_price"]), asset["base_price"])
+    return total
+
+
 def gross_assets(chips, profile):
-    return int(chips) + int(profile.get("bank", 0))
+    return int(chips) + int(profile.get("bank", 0)) + market_value(profile)
 
 
 def total_debt(profile):
@@ -348,6 +504,87 @@ def operation_progress(profile):
     return profile.get("operation_count", 0) % DAILY_OPERATION_COUNT
 
 
+def asset_price_change_pct(old_price, new_price):
+    if old_price <= 0:
+        return 0.0
+    return (new_price - old_price) / old_price * 100
+
+
+def apply_asset_market_day(chips, stats, profile):
+    messages = []
+    before = state_snapshot(chips, profile)
+    passive_income = 0
+    biggest_move = None
+
+    for asset in ASSET_MARKETS:
+        state = market_asset_state(profile, asset["id"])
+        old_price = max(1, safe_int(state.get("price", asset["base_price"]), asset["base_price"]))
+        reversion = ((asset["base_price"] - old_price) / asset["base_price"]) * 0.12
+        shock = random.uniform(-asset["volatility"], asset["volatility"])
+        pct_move = asset["drift"] + reversion + shock
+        new_price = int(round(old_price * (1 + pct_move)))
+        new_price = max(asset["floor"], min(asset["ceiling"], new_price))
+        if new_price == old_price and random.random() < 0.45:
+            nudge = random.choice([-1, 1])
+            new_price = max(asset["floor"], min(asset["ceiling"], old_price + nudge))
+        state["price"] = new_price
+        history = state.setdefault("history", [])
+        history.append(new_price)
+        state["history"] = history[-8:]
+
+        move_abs = abs(new_price - old_price)
+        if biggest_move is None or move_abs > biggest_move["move_abs"]:
+            biggest_move = {
+                "name": asset["name"],
+                "from": old_price,
+                "to": new_price,
+                "move_abs": move_abs,
+                "move_pct": asset_price_change_pct(old_price, new_price),
+            }
+
+        shares = safe_int(state.get("shares", 0), 0)
+        if shares > 0 and asset["yield_rate"] > 0:
+            income = max(1, int(round(new_price * shares * asset["yield_rate"])))
+            profile["bank"] += income
+            stats["asset_passive_income"] += income
+            state["passive_income_total"] = safe_int(state.get("passive_income_total", 0), 0) + income
+            passive_income += income
+
+    details = {
+        "day": profile.get("bank_days_elapsed", 0),
+        "passive_income": passive_income,
+        "assets": {
+            asset["id"]: {
+                "price": market_asset_state(profile, asset["id"])["price"],
+                "shares": market_asset_state(profile, asset["id"])["shares"],
+            }
+            for asset in ASSET_MARKETS
+        },
+    }
+    if biggest_move:
+        details["biggest_move"] = biggest_move
+        direction_color = C.GREEN if biggest_move["to"] >= biggest_move["from"] else C.RED
+        messages.append(
+            colored(
+                f"  [典当行行情] {biggest_move['name']} {biggest_move['from']} -> {biggest_move['to']} ({biggest_move['move_pct']:+.1f}%)",
+                direction_color,
+            )
+        )
+    if passive_income > 0:
+        messages.append(colored(f"  [经营分红] 今日被动收入已打入银行 +${passive_income}", C.CYAN))
+    append_history(
+        stats,
+        profile,
+        "pawnshop",
+        "market_day",
+        details=details,
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
+    return messages
+
+
 def apply_bank_day(chips, stats, profile):
     messages = []
     before = state_snapshot(chips, profile)
@@ -377,6 +614,7 @@ def apply_bank_day(chips, stats, profile):
         summary.append(f"贷款利息 -${debt_interest}")
     if len(summary) > 1:
         messages.append(colored("  [银行结息] " + " / ".join(summary), C.YELLOW))
+    messages.extend(apply_asset_market_day(chips, stats, profile))
     append_history(
         stats,
         profile,
@@ -514,12 +752,40 @@ def state_snapshot(chips, profile):
     return {
         "cash": int(chips),
         "bank": int(profile.get("bank", 0)),
+        "market_value": int(market_value(profile)),
         "debt": int(total_debt(profile)),
         "net_assets": int(total_assets(chips, profile)),
         "bank_ratio": float(profile.get("bank_ratio", 0.5)),
         "operation_cycle_progress": int(operation_progress(profile)),
         "bank_days_elapsed": int(profile.get("bank_days_elapsed", 0)),
+        "location": profile.get("location", "home"),
     }
+
+
+def location_label(location):
+    return LOCATIONS.get(location, "家里")
+
+
+def travel_to(chips, slot, stats, profile, target):
+    current = profile.get("location", "home")
+    if target not in LOCATIONS:
+        target = "home"
+    if current == target:
+        profile["location"] = target
+        return
+    before = state_snapshot(chips, profile)
+    profile["location"] = target
+    append_history(
+        stats,
+        profile,
+        "system",
+        "travel",
+        details={"from": current, "to": target},
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
+    auto_save(slot, chips, stats, profile)
 
 
 def game_stats(stats, key):
@@ -611,6 +877,7 @@ def build_export_payload(slot, chips, stats, profile):
         "summary": {
             "cash": chips,
             "bank": profile.get("bank", 0),
+            "market_value": market_value(profile),
             "debt": total_debt(profile),
             "net_assets": total_assets(chips, profile),
             "bank_ratio": profile.get("bank_ratio", 0.5),
@@ -618,9 +885,15 @@ def build_export_payload(slot, chips, stats, profile):
             "operations_total": stats.get("operations_count", 0),
             "government_aid_used": profile.get("government_aid_used", 0),
             "career_high_assets": profile.get("career_high_assets", INITIAL_CHIPS),
+            "bank_interest_earned": stats.get("bank_interest_earned", 0),
+            "loan_interest_paid": stats.get("loan_interest_paid", 0),
+            "asset_realized_profit": stats.get("asset_realized_profit", 0),
+            "asset_passive_income": stats.get("asset_passive_income", 0),
+            "location": profile.get("location", "home"),
         },
         "stats": stats,
         "loans": profile.get("loans", []),
+        "pawnshop": profile.get("pawnshop", {}),
         "history": profile.get("history", []),
     }
 
@@ -653,6 +926,7 @@ def show_career_summary(chips, stats, profile, slot, wait=True):
     clear()
     assets = total_assets(chips, profile)
     debt = total_debt(profile)
+    holdings = market_value(profile)
     total_games = stats.get("wins", 0) + stats.get("losses", 0) + stats.get("pushes", 0)
     win_rate = (stats.get("wins", 0) / total_games * 100) if total_games else 0
     lines = [
@@ -669,12 +943,17 @@ def show_career_summary(chips, stats, profile, slot, wait=True):
         "",
         f"最终现金:     {colored('$' + str(chips), C.RED if chips <= 0 else C.GREEN)}",
         f"银行余额:     {colored('$' + str(profile.get('bank', 0)), C.YELLOW)}",
+        f"持仓市值:     {colored('$' + str(holdings), C.CYAN if holdings > 0 else C.DIM)}",
         f"贷款负债:     {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}",
         f"最终净资产:   {colored('$' + str(assets), C.RED if assets <= 0 else C.GREEN)}",
         f"资产峰值:     {colored('$' + str(profile.get('career_high_assets', INITIAL_CHIPS)), C.MAGENTA)}",
         f"政府补贴:     {colored(str(profile.get('government_aid_used', 0)), C.YELLOW)}/{MAX_GOVERNMENT_AID}",
         f"Boss 击败数:  {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
         f"银行天数:     {colored(str(profile.get('bank_days_elapsed', 0)), C.CYAN)}",
+        f"累计收息:     {colored('$' + str(stats.get('bank_interest_earned', 0)), C.GREEN)}",
+        f"累计付息:     {colored('$' + str(stats.get('loan_interest_paid', 0)), C.RED)}",
+        f"交易已实现:   {colored('$' + str(stats.get('asset_realized_profit', 0)), C.GREEN if stats.get('asset_realized_profit', 0) >= 0 else C.RED)}",
+        f"经营被动收:   {colored('$' + str(stats.get('asset_passive_income', 0)), C.CYAN)}",
     ]
     if profile.get("retire_reason"):
         lines.extend(["", colored(profile["retire_reason"], C.RED)])
@@ -910,6 +1189,105 @@ def len_display(s):
             width += 1
     return width
 
+def asset_position_summary(profile, asset):
+    state = market_asset_state(profile, asset["id"])
+    shares = safe_int(state.get("shares", 0), 0)
+    price = safe_int(state.get("price", asset["base_price"]), asset["base_price"])
+    avg_cost = safe_float(state.get("avg_cost", 0.0), 0.0)
+    market_val = shares * price
+    unrealized = int(round((price - avg_cost) * shares))
+    history = state.get("history", [price])
+    prev_price = history[-2] if len(history) >= 2 else price
+    return {
+        "state": state,
+        "shares": shares,
+        "price": price,
+        "avg_cost": avg_cost,
+        "market_value": market_val,
+        "unrealized": unrealized,
+        "prev_price": prev_price,
+        "move_pct": asset_price_change_pct(prev_price, price),
+    }
+
+
+def total_unrealized_profit(profile):
+    return sum(asset_position_summary(profile, asset)["unrealized"] for asset in ASSET_MARKETS)
+
+
+def asset_chart_lines(profile, asset):
+    state = market_asset_state(profile, asset["id"])
+    history = state.get("history", [state.get("price", asset["base_price"])])[-8:]
+    if not history:
+        history = [asset["base_price"]]
+    low = min(history)
+    high = max(history)
+    span = max(1, high - low)
+    lines = []
+    for idx, price in enumerate(history, start=max(1, len(history) - 7)):
+        bar_len = 1 + int(((price - low) / span) * 12)
+        if idx == 1:
+            color = C.DIM
+        else:
+            prev = history[idx - 2]
+            color = C.GREEN if price >= prev else C.RED
+        lines.append(f"D{idx:02d} {str(price).rjust(4)} {colored('█' * bar_len, color)}")
+    return lines
+
+
+def pawnshop_market_lines(profile):
+    lines = []
+    for idx, asset in enumerate(ASSET_MARKETS, start=1):
+        info = asset_position_summary(profile, asset)
+        direction_color = C.GREEN if info["price"] >= info["prev_price"] else C.RED
+        pnl_color = C.GREEN if info["unrealized"] >= 0 else C.RED
+        yield_text = f"{asset['yield_rate'] * 100:.2f}%/天" if asset["yield_rate"] > 0 else "无分红"
+        lines.append(
+            f"{idx}. {asset['name']} {colored('[$' + str(info['price']) + ']', direction_color)}"
+            f"  持仓 {colored(str(info['shares']), C.WHITE)}"
+            f"  浮盈 {colored('$' + str(info['unrealized']), pnl_color)}"
+        )
+        lines.append(f"   {asset['tag']} | {yield_text} | {asset['desc']}")
+    return lines
+
+
+def pawnshop_portfolio_lines(profile):
+    holdings = market_value(profile)
+    unrealized = total_unrealized_profit(profile)
+    realized = safe_int(sum(market_asset_state(profile, asset["id"]).get("realized_profit", 0) for asset in ASSET_MARKETS), 0)
+    passive = safe_int(sum(market_asset_state(profile, asset["id"]).get("passive_income_total", 0) for asset in ASSET_MARKETS), 0)
+    return [
+        f"持仓市值: {colored('$' + str(holdings), C.CYAN if holdings > 0 else C.DIM)}",
+        f"浮动盈亏: {colored('$' + str(unrealized), C.GREEN if unrealized >= 0 else C.RED)}",
+        f"已实现:   {colored('$' + str(realized), C.GREEN if realized >= 0 else C.RED)}",
+        f"被动收入: {colored('$' + str(passive), C.CYAN)}",
+        "空头位已预留，当前版本暂时只开放做多。",
+    ]
+
+
+def location_hint_lines(current):
+    items = [
+        ("H", "家里", "home"),
+        ("C", "赌场", "casino"),
+        ("B", "银行", "bank"),
+        ("P", "典当行", "pawnshop"),
+    ]
+    lines = []
+    for key, label, loc in items:
+        text = f"{key} {label}"
+        if loc == current:
+            lines.append(colored(text + " (当前)", C.GREEN))
+        else:
+            lines.append(colored(text, C.CYAN))
+    lines.extend([
+        colored("S 战绩统计", C.YELLOW),
+        colored("E 导出复盘", C.YELLOW),
+        colored("G 领取补贴", C.YELLOW),
+        colored("SKIP 跳到下一天", C.YELLOW),
+        colored("0 保存并离开", C.RED),
+    ])
+    return lines
+
+
 def header(chips, slot=None, stats=None, profile=None):
     """顶部状态栏"""
     chip_str = f"${chips}"
@@ -922,13 +1300,17 @@ def header(chips, slot=None, stats=None, profile=None):
     lines = [
         bold(colored(f"♠ ♥ ♣ ♦  Leo's Casino {GAME_VERSION}  ♦ ♣ ♥ ♠", C.YELLOW)),
         "",
-        f"  筹码: {colored(chip_str, chip_color)}",
+        f"  现金: {colored(chip_str, chip_color)}",
     ]
     if profile is not None:
         assets = total_assets(chips, profile)
         debt = total_debt(profile)
         lines.append(
+            f"  地点: {colored(location_label(profile.get('location', 'home')), C.MAGENTA)}"
             f"  银行: {colored('$' + str(profile.get('bank', 0)), C.CYAN)}"
+        )
+        lines.append(
+            f"  持仓: {colored('$' + str(market_value(profile)), C.WHITE)}"
             f"  负债: {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}"
         )
         lines.append(
@@ -940,7 +1322,41 @@ def header(chips, slot=None, stats=None, profile=None):
         if stats:
             slot_info += f"  W{stats.get('wins',0)}/L{stats.get('losses',0)}"
         lines.append(colored(slot_info, C.DIM))
-    print(box(lines, width=64, color=C.YELLOW))
+    print(box(lines, width=68, color=C.YELLOW))
+
+
+def global_command_result(choice, chips, slot, stats, profile):
+    choice = (choice or "").strip().upper()
+    travel_map = {
+        "H": "home",
+        "C": "casino",
+        "B": "bank",
+        "P": "pawnshop",
+    }
+    if choice in travel_map:
+        travel_to(chips, slot, stats, profile, travel_map[choice])
+        return chips, travel_map[choice]
+    if choice == 'S':
+        show_stats(chips, stats, profile)
+        return chips, None
+    if choice == 'E':
+        path = export_review_data(slot, chips, stats, profile)
+        auto_save(slot, chips, stats, profile)
+        clear()
+        header(chips, slot, stats, profile)
+        print(colored("\n  复盘数据已导出。", C.GREEN))
+        print(colored(f"  路径: {path}", C.DIM))
+        pause()
+        return chips, None
+    if choice == 'G':
+        chips = claim_government_aid(chips, slot, stats, profile)
+        return chips, None
+    if choice == 'SKIP':
+        chips = skip_to_next_day(chips, slot, stats, profile)
+        return chips, None
+    if choice == '0':
+        return chips, "__exit__"
+    return chips, "__local__"
 
 
 def max_bank_withdrawal(chips, profile):
@@ -988,7 +1404,6 @@ def bank_menu(chips, slot, stats, profile):
             colored("4", C.GREEN) + "  借款",
             colored("5", C.GREEN) + "  还款",
             (colored("6", C.GREEN) + "  一键补缺") if shortfall > 0 and profile.get("bank", 0) > 0 else (colored("6", C.DIM) + "  一键补缺"),
-            colored("0", C.RED) + "  返回大厅",
         ]
         print(colored("\n  ── 银行 ──\n", C.CYAN))
         left_panel = box(overview_lines, width=34, title="资产总览", color=C.CYAN)
@@ -1006,12 +1421,19 @@ def bank_menu(chips, slot, stats, profile):
                 colored("提示", C.YELLOW) + "  利率越高越危险，优先还高档贷款。",
             ], width=42, title="规则说明", color=C.YELLOW)
         ]))
+        print()
+        print(box(location_hint_lines("bank"), width=68, title="全局快捷", color=C.BLUE))
         if shortfall > 0:
             print(colored(f"  当前现金欠款 ${shortfall}，在补齐前不能参加任何赌桌。", C.RED))
 
-        choice = input(colored("\n  选择 > ", C.YELLOW)).strip()
-        if choice == '0':
-            return chips
+        choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
+        chips, global_result = global_command_result(choice, chips, slot, stats, profile)
+        if global_result == "__exit__":
+            return chips, "__exit__"
+        if global_result in LOCATIONS and global_result != "bank":
+            return chips, global_result
+        if global_result != "__local__":
+            continue
         if choice == '1':
             if chips <= 0:
                 print(colored("  你手上没有可存入的现金。", C.RED))
@@ -1247,6 +1669,219 @@ def bank_menu(chips, slot, stats, profile):
                 print(colored(f"  已补上 ${amount}，但现金仍欠 ${debt_shortfall(chips)}。", C.YELLOW))
             for notice in notices:
                 print(notice)
+            pause()
+        else:
+            print(colored("  无效输入。", C.RED))
+            pause()
+
+
+def choose_asset_from_market(chips, slot, stats, profile, title="选择资产"):
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        print(colored(f"\n  ── {title} ──\n", C.MAGENTA))
+        print(box(pawnshop_market_lines(profile), width=68, title="典当行行情", color=C.MAGENTA))
+        print(colored("\n  输入资产编号，或直接回车取消。", C.DIM))
+        choice = input(colored("  > ", C.YELLOW)).strip()
+        if not choice:
+            return None
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= len(ASSET_MARKETS):
+                return ASSET_MARKETS[idx - 1]
+        print(colored("  无效编号。", C.RED))
+        pause()
+
+
+def pawnshop_buy_asset(chips, slot, stats, profile):
+    asset = choose_asset_from_market(chips, slot, stats, profile, title="买入资产")
+    if asset is None:
+        return chips
+    info = asset_position_summary(profile, asset)
+    price = info["price"]
+    max_shares = chips // price
+    if max_shares <= 0:
+        print(colored("  现金不够，至少也得先攒一手。", C.RED))
+        pause()
+        return chips
+    print(colored(f"\n  {asset['name']} 当前价格 ${price}，最多可买 {max_shares} 份。", C.CYAN))
+    print(colored("  输入买入份数，或输入 0 取消。", C.DIM))
+    try:
+        shares = int(input(colored("  > ", C.YELLOW)))
+    except (ValueError, EOFError):
+        return chips
+    if shares <= 0:
+        return chips
+    if shares > max_shares:
+        print(colored("  超出可买范围。", C.RED))
+        pause()
+        return chips
+    before = state_snapshot(chips, profile)
+    state = market_asset_state(profile, asset["id"])
+    cost = shares * price
+    total_basis = safe_float(state.get("avg_cost", 0.0), 0.0) * safe_int(state.get("shares", 0), 0) + cost
+    state["shares"] = safe_int(state.get("shares", 0), 0) + shares
+    state["avg_cost"] = total_basis / state["shares"]
+    chips -= cost
+    stats["asset_trade_count"] += 1
+    stats["asset_buy_total"] += cost
+    notices = record_operations(chips, stats, profile, 1)
+    append_history(
+        stats,
+        profile,
+        "pawnshop",
+        "buy_asset",
+        details={
+            "asset_id": asset["id"],
+            "asset_name": asset["name"],
+            "shares": shares,
+            "price": price,
+            "cost": cost,
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=1,
+    )
+    auto_save(slot, chips, stats, profile)
+    print(colored(f"  已买入 {asset['name']} x{shares}，花费 ${cost}。", C.GREEN))
+    for notice in notices:
+        print(notice)
+    pause()
+    return chips
+
+
+def pawnshop_sell_asset(chips, slot, stats, profile):
+    owned_assets = [asset for asset in ASSET_MARKETS if asset_position_summary(profile, asset)["shares"] > 0]
+    if not owned_assets:
+        print(colored("  你手上还没有可卖出的持仓。", C.RED))
+        pause()
+        return chips
+    asset = choose_asset_from_market(chips, slot, stats, profile, title="卖出资产")
+    if asset is None:
+        return chips
+    info = asset_position_summary(profile, asset)
+    if info["shares"] <= 0:
+        print(colored("  这项资产你还没持有。", C.RED))
+        pause()
+        return chips
+    print(colored(f"\n  {asset['name']} 当前价格 ${info['price']}，可卖 {info['shares']} 份。", C.CYAN))
+    print(colored("  输入卖出份数，或输入 0 取消。", C.DIM))
+    try:
+        shares = int(input(colored("  > ", C.YELLOW)))
+    except (ValueError, EOFError):
+        return chips
+    if shares <= 0:
+        return chips
+    if shares > info["shares"]:
+        print(colored("  超出可卖范围。", C.RED))
+        pause()
+        return chips
+    before = state_snapshot(chips, profile)
+    state = market_asset_state(profile, asset["id"])
+    revenue = shares * info["price"]
+    realized = int(round((info["price"] - safe_float(state.get("avg_cost", 0.0), 0.0)) * shares))
+    chips += revenue
+    state["shares"] = safe_int(state.get("shares", 0), 0) - shares
+    if state["shares"] <= 0:
+        state["shares"] = 0
+        state["avg_cost"] = 0.0
+    state["realized_profit"] = safe_int(state.get("realized_profit", 0), 0) + realized
+    stats["asset_trade_count"] += 1
+    stats["asset_sell_total"] += revenue
+    stats["asset_realized_profit"] += realized
+    notices = record_operations(chips, stats, profile, 1)
+    append_history(
+        stats,
+        profile,
+        "pawnshop",
+        "sell_asset",
+        details={
+            "asset_id": asset["id"],
+            "asset_name": asset["name"],
+            "shares": shares,
+            "price": info["price"],
+            "revenue": revenue,
+            "realized_profit": realized,
+        },
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=1,
+    )
+    auto_save(slot, chips, stats, profile)
+    color = C.GREEN if realized >= 0 else C.RED
+    print(colored(f"  已卖出 {asset['name']} x{shares}，回笼 ${revenue}。", C.GREEN))
+    print(colored(f"  本次已实现盈亏 ${realized}。", color))
+    for notice in notices:
+        print(notice)
+    pause()
+    return chips
+
+
+def pawnshop_show_asset_chart(chips, slot, stats, profile):
+    asset = choose_asset_from_market(chips, slot, stats, profile, title="查看走势")
+    if asset is None:
+        return
+    info = asset_position_summary(profile, asset)
+    clear()
+    header(chips, slot, stats, profile)
+    details = [
+        f"资产:     {colored(asset['name'], C.MAGENTA)}",
+        f"分类:     {colored(asset['tag'], C.CYAN)}",
+        f"当前价格: {colored('$' + str(info['price']), C.GREEN if info['price'] >= info['prev_price'] else C.RED)}",
+        f"持仓份数: {colored(str(info['shares']), C.WHITE)}",
+        f"持仓成本: {colored('$' + format(info['avg_cost'], '.1f'), C.YELLOW)}",
+        f"浮动盈亏: {colored('$' + str(info['unrealized']), C.GREEN if info['unrealized'] >= 0 else C.RED)}",
+        f"日收益率: {colored(format(asset['yield_rate'] * 100, '.2f') + '%', C.CYAN if asset['yield_rate'] > 0 else C.DIM)}",
+        "",
+        asset["desc"],
+    ]
+    print(colored(f"\n  ── {asset['name']} ──\n", C.MAGENTA))
+    print(render_box_columns([
+        box(details, width=34, title="资产详情", color=C.CYAN),
+        box(asset_chart_lines(profile, asset), width=31, title="近 8 天 ASCII 走势", color=C.MAGENTA),
+    ], gap=3))
+    pause()
+
+
+def pawnshop_menu(chips, slot, stats, profile):
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        print(colored("\n  ── 典当行 ──\n", C.MAGENTA))
+        print(box(pawnshop_market_lines(profile), width=68, title="当日行情", color=C.MAGENTA))
+        print()
+        print(render_box_columns([
+            box(pawnshop_portfolio_lines(profile), width=34, title="投资组合", color=C.CYAN),
+            box([
+                colored("1", C.GREEN) + "  买入资产",
+                colored("2", C.GREEN) + "  卖出资产",
+                colored("3", C.GREEN) + "  查看走势",
+            ], width=24, title="典当行操作", color=C.GREEN),
+            box([
+                "这里处理长期资产和街区生意。",
+                "每逢银行结息日，资产价格会统一更新。",
+                "带收益的资产会把日收入自动打进银行。",
+                "没现金但有持仓时，不算破产，可来这里卖仓救急。",
+            ], width=34, title="说明", color=C.YELLOW),
+        ], gap=2))
+        print()
+        print(box(location_hint_lines("pawnshop"), width=68, title="全局快捷", color=C.BLUE))
+        choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
+        chips, global_result = global_command_result(choice, chips, slot, stats, profile)
+        if global_result == "__exit__":
+            return chips, "__exit__"
+        if global_result in LOCATIONS and global_result != "pawnshop":
+            return chips, global_result
+        if global_result != "__local__":
+            continue
+        if choice == '1':
+            chips = pawnshop_buy_asset(chips, slot, stats, profile)
+        elif choice == '2':
+            chips = pawnshop_sell_asset(chips, slot, stats, profile)
+        elif choice == '3':
+            pawnshop_show_asset_chart(chips, slot, stats, profile)
+        else:
+            print(colored("  无效输入。", C.RED))
             pause()
 
 
@@ -3024,8 +3659,146 @@ def skip_to_next_day(chips, slot, stats, profile):
 # ============================================================
 # 主菜单
 # ============================================================
+def save_and_exit(chips, slot, stats, profile):
+    append_history(
+        stats,
+        profile,
+        "system",
+        "session_saved_and_exit",
+        details={"slot": slot, "location": profile.get("location", "home")},
+        before=state_snapshot(chips, profile),
+        after=state_snapshot(chips, profile),
+        operation_delta=0,
+    )
+    auto_save(slot, chips, stats, profile)
+    clear()
+    print(colored("\n  游戏已保存！感谢光临 Leo's Casino！", C.YELLOW))
+    print(
+        colored(
+            f"  你带走了 ${chips} 现金，银行 ${profile.get('bank', 0)}，持仓 ${market_value(profile)}，负债 ${total_debt(profile)}。\n",
+            C.GREEN if total_assets(chips, profile) >= INITIAL_CHIPS else C.RED,
+        )
+    )
+
+
+def home_menu(chips, slot, stats, profile):
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        cash_shortfall = debt_shortfall(chips)
+        left = box([
+            f"现金:       {colored('$' + str(chips), C.GREEN if chips > 0 else C.RED)}",
+            f"银行存款:   {colored('$' + str(profile.get('bank', 0)), C.CYAN)}",
+            f"持仓市值:   {colored('$' + str(market_value(profile)), C.WHITE)}",
+            f"贷款负债:   {colored('$' + str(total_debt(profile)), C.RED if total_debt(profile) > 0 else C.DIM)}",
+            f"净资产:     {colored('$' + str(total_assets(chips, profile)), C.GREEN if total_assets(chips, profile) > 0 else C.RED)}",
+            f"现金缺口:   {colored('$' + str(cash_shortfall), C.RED if cash_shortfall > 0 else C.DIM)}",
+            f"今日地点:   {colored(location_label('home'), C.MAGENTA)}",
+        ], width=34, title="家里", color=C.CYAN)
+        right = box([
+            colored("1", C.GREEN) + "  去赌场",
+            colored("2", C.GREEN) + "  去银行",
+            colored("3", C.GREEN) + "  去典当行",
+            "",
+            "你从家里出发，决定今天先去哪里。",
+            "赌场适合搏一把，银行适合整理现金流，",
+            "典当行适合做长期仓位和卖仓救急。",
+        ], width=46, title="出门计划", color=C.GREEN)
+        print()
+        print(render_box_columns([left, right], gap=3))
+        print()
+        print(box(location_hint_lines("home"), width=68, title="全局快捷", color=C.BLUE))
+        if cash_shortfall > 0:
+            print(colored(f"  现金当前为负 ${cash_shortfall}。你不能上赌桌，但还能去银行或典当行处理仓位。", C.RED))
+        elif can_claim_government_aid(chips, profile):
+            print(colored(f"  你符合补贴条件，可领取 ${GOVERNMENT_AID_AMOUNT}。", C.GREEN))
+        choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
+        chips, global_result = global_command_result(choice, chips, slot, stats, profile)
+        if global_result == "__exit__":
+            return chips, "__exit__"
+        if global_result in LOCATIONS and global_result != "home":
+            return chips, global_result
+        if global_result != "__local__":
+            continue
+        if choice == '1':
+            travel_to(chips, slot, stats, profile, "casino")
+            return chips, "casino"
+        if choice == '2':
+            travel_to(chips, slot, stats, profile, "bank")
+            return chips, "bank"
+        if choice == '3':
+            travel_to(chips, slot, stats, profile, "pawnshop")
+            return chips, "pawnshop"
+        print(colored("  无效输入。", C.RED))
+        pause()
+
+
+def casino_menu(chips, slot, stats, profile):
+    while True:
+        clear()
+        header(chips, slot, stats, profile)
+        menu = [
+            colored("1", C.GREEN) + "  Blackjack (21点)",
+            colored("2", C.GREEN) + "  Craps (骰子)",
+            colored("3", C.GREEN) + "  Slots (老虎机)",
+            colored("4", C.GREEN) + "  火烧洋油站",
+            colored("5", C.GREEN) + "  地下跑单",
+        ]
+        print(colored("\n  ── 赌场 ──\n", C.CYAN))
+        print(render_box_columns([
+            box(menu, width=34, title="赌桌列表", color=C.CYAN),
+            box([
+                "这里还是那个最危险也最刺激的地方。",
+                "短线现金流靠赌桌，长期资金线可以去典当行。",
+                "地下跑单每天只能做一次，火烧洋油站仍然是长线 Boss 桌。",
+            ], width=42, title="街区情报", color=C.YELLOW),
+        ], gap=2))
+        print()
+        print(box(location_hint_lines("casino"), width=68, title="全局快捷", color=C.BLUE))
+
+        cash_shortfall = debt_shortfall(chips)
+        if chips <= 0 and profile.get("bank", 0) > 0:
+            print(colored("\n  手上没现金了，可以去银行取钱，或去典当行卖一点仓位。", C.YELLOW))
+        if cash_shortfall > 0:
+            print(colored(f"  当前现金欠款 ${cash_shortfall}，赌场桌面已锁定。先去银行补缺，或去典当行卖仓。", C.RED))
+        if total_debt(profile) > 0:
+            print(colored(f"  当前贷款负债 ${total_debt(profile)}，距离下一次结息还差 {DAILY_OPERATION_COUNT - operation_progress(profile)} 步。", C.RED))
+        if runner_available(profile):
+            print(colored("  今日地下跑单资格可用。", C.CYAN))
+        else:
+            print(colored("  今日地下跑单资格已用掉。", C.DIM))
+
+        choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
+        chips, global_result = global_command_result(choice, chips, slot, stats, profile)
+        if global_result == "__exit__":
+            return chips, "__exit__"
+        if global_result in LOCATIONS and global_result != "casino":
+            return chips, global_result
+        if global_result != "__local__":
+            continue
+        if cash_shortfall > 0 and choice in {'1', '2', '3', '4', '5'}:
+            clear()
+            header(chips, slot, stats, profile)
+            print(colored("\n  现金为负时不能参加任何赌桌。", C.RED))
+            print(colored("  去银行用一键补缺，或者去典当行卖一点持仓。", C.YELLOW))
+            pause()
+            continue
+        if choice == '1':
+            chips = blackjack(chips, slot, stats, profile)
+        elif choice == '2':
+            chips = craps(chips, slot, stats, profile)
+        elif choice == '3':
+            chips = slots(chips, slot, stats, profile)
+        elif choice == '4':
+            chips = fire_station(chips, slot, stats, profile)
+        elif choice == '5':
+            chips = underground_runner(chips, slot, stats, profile)
+        else:
+            print(colored("  无效输入。", C.RED))
+            pause()
+
+
 def main():
-    # 存档选择
     result = save_menu()
     if result is None:
         print(colored("\n  再见！\n", C.YELLOW))
@@ -3036,7 +3809,7 @@ def main():
         profile,
         "system",
         "session_opened",
-        details={"slot": active_slot},
+        details={"slot": active_slot, "location": profile.get("location", "home")},
         before=state_snapshot(chips, profile),
         after=state_snapshot(chips, profile),
         operation_delta=0,
@@ -3049,98 +3822,22 @@ def main():
             career_summary_menu(chips, stats, profile, active_slot)
             break
 
-        clear()
-        header(chips, active_slot, stats, profile)
-        print()
-        menu = [
-            colored("1", C.GREEN) + "  Blackjack (21点)",
-            colored("2", C.GREEN) + "  Craps (骰子)",
-            colored("3", C.GREEN) + "  Slots (老虎机)",
-            colored("4", C.GREEN) + "  火烧洋油站",
-            colored("5", C.GREEN) + "  地下跑单",
-            "",
-            colored("B", C.CYAN) + "  银行",
-            colored("E", C.CYAN) + "  导出复盘数据",
-            colored("G", C.YELLOW) + "  领取政府补贴",
-            colored("S", C.CYAN) + "  战绩统计",
-            colored("0", C.RED) + "  保存并离开",
-        ]
-        print(box(menu, width=42, title="游戏大厅", color=C.CYAN))
-
-        cash_shortfall = debt_shortfall(chips)
-        if chips <= 0 and profile.get("bank", 0) > 0:
-            print(colored("\n  你手上没现金了，可以去银行按安全比率取一些出来。", C.YELLOW))
-        if cash_shortfall > 0:
-            print(colored(f"  当前现金欠款 ${cash_shortfall}，赌桌已锁定。先去银行补缺，或输入 SKIP 跳到下一天。", C.RED))
-        if total_debt(profile) > 0:
-            print(colored(f"  当前贷款负债 ${total_debt(profile)}，距离下一次结息还差 {DAILY_OPERATION_COUNT - operation_progress(profile)} 步。", C.RED))
-        if runner_available(profile):
-            print(colored("  今日地下跑单资格可用。", C.CYAN))
+        current_location = profile.get("location", "home")
+        if current_location == "casino":
+            chips, next_action = casino_menu(chips, active_slot, stats, profile)
+        elif current_location == "bank":
+            chips, next_action = bank_menu(chips, active_slot, stats, profile)
+        elif current_location == "pawnshop":
+            chips, next_action = pawnshop_menu(chips, active_slot, stats, profile)
         else:
-            print(colored("  今日地下跑单资格已用掉。", C.DIM))
-        if can_claim_government_aid(chips, profile):
-            print(colored(f"  你符合补贴条件，可领取 ${GOVERNMENT_AID_AMOUNT}。", C.GREEN))
-        elif total_assets(chips, profile) <= 0:
-            left = MAX_GOVERNMENT_AID - profile.get("government_aid_used", 0)
-            print(colored(f"  净资产已归零。剩余政府补贴次数: {left}", C.RED if left == 0 else C.YELLOW))
+            chips, next_action = home_menu(chips, active_slot, stats, profile)
 
-        try:
-            choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
-        except (EOFError, KeyboardInterrupt):
+        if next_action == "__exit__":
+            save_and_exit(chips, active_slot, stats, profile)
             break
-
-        if choice == 'SKIP':
-            chips = skip_to_next_day(chips, active_slot, stats, profile)
+        if next_action in LOCATIONS:
+            profile["location"] = next_action
             continue
-        if cash_shortfall > 0 and choice in {'1', '2', '3', '4', '5'}:
-            clear()
-            header(chips, active_slot, stats, profile)
-            print(colored("\n  现金为负时不能参加任何赌桌。", C.RED))
-            print(colored("  去银行用一键补缺，或者输入 SKIP 快速跳到下一天。", C.YELLOW))
-            pause()
-            continue
-
-        if choice == '1':
-            chips = blackjack(chips, active_slot, stats, profile)
-        elif choice == '2':
-            chips = craps(chips, active_slot, stats, profile)
-        elif choice == '3':
-            chips = slots(chips, active_slot, stats, profile)
-        elif choice == '4':
-            chips = fire_station(chips, active_slot, stats, profile)
-        elif choice == '5':
-            chips = underground_runner(chips, active_slot, stats, profile)
-        elif choice == 'B':
-            chips = bank_menu(chips, active_slot, stats, profile)
-        elif choice == 'E':
-            path = export_review_data(active_slot, chips, stats, profile)
-            auto_save(active_slot, chips, stats, profile)
-            clear()
-            header(chips, active_slot, stats, profile)
-            print(colored("\n  复盘数据已导出。", C.GREEN))
-            print(colored(f"  路径: {path}", C.DIM))
-            pause()
-        elif choice == 'G':
-            chips = claim_government_aid(chips, active_slot, stats, profile)
-        elif choice == 'S':
-            show_stats(chips, stats, profile)
-        elif choice == '0':
-            append_history(
-                stats,
-                profile,
-                "system",
-                "session_saved_and_exit",
-                details={"slot": active_slot},
-                before=state_snapshot(chips, profile),
-                after=state_snapshot(chips, profile),
-                operation_delta=0,
-            )
-            auto_save(active_slot, chips, stats, profile)
-            clear()
-            print(colored("\n  游戏已保存！感谢光临 Leo's Casino！", C.YELLOW))
-            print(colored(f"  你带走了 ${chips} 现金，银行 ${profile.get('bank', 0)}，负债 ${total_debt(profile)}。\n",
-                          C.GREEN if total_assets(chips, profile) >= INITIAL_CHIPS else C.RED))
-            break
 
 
 def game_panel_lines(stats, key, title, special_label):
@@ -3164,6 +3861,7 @@ def show_stats(chips, stats, profile):
     win_rate = (stats["wins"] / total_games * 100) if total_games > 0 else 0
     assets = total_assets(chips, profile)
     debt = total_debt(profile)
+    holdings = market_value(profile)
     overview_box = box([
         f"总局数:   {colored(str(total_games), C.WHITE)}",
         f"胜负平:   {colored(str(stats.get('wins', 0)), C.GREEN)}/{colored(str(stats.get('losses', 0)), C.RED)}/{colored(str(stats.get('pushes', 0)), C.BLUE)}",
@@ -3176,17 +3874,31 @@ def show_stats(chips, stats, profile):
     bank_box = box([
         f"现金:     {colored(f'${chips}', C.GREEN if chips > 0 else C.RED)}",
         f"存款:     {colored('$' + str(profile.get('bank', 0)), C.CYAN)}",
+        f"持仓:     {colored('$' + str(holdings), C.WHITE)}",
         f"负债:     {colored('$' + str(debt), C.RED if debt > 0 else C.DIM)}",
         f"净资产:   {colored('$' + str(assets), C.GREEN if assets > 0 else C.RED)}",
         f"资产峰值: {colored('$' + str(profile.get('career_high_assets', INITIAL_CHIPS)), C.MAGENTA)}",
         f"盈亏:     {colored(f'${assets - INITIAL_CHIPS}', C.GREEN if assets >= INITIAL_CHIPS else C.RED)}",
         "",
         f"存入/取出: {colored('$' + str(stats.get('bank_deposit_total', 0)), C.WHITE)}/{colored('$' + str(stats.get('bank_withdraw_total', 0)), C.WHITE)}",
-        f"利息:      {colored('$' + str(stats.get('bank_interest_earned', 0)), C.GREEN)} / {colored('$' + str(stats.get('loan_interest_paid', 0)), C.RED)}",
+        f"累计收息:  {colored('$' + str(stats.get('bank_interest_earned', 0)), C.GREEN)}",
+        f"累计付息:  {colored('$' + str(stats.get('loan_interest_paid', 0)), C.RED)}",
         f"借还款:    {colored('$' + str(stats.get('loan_borrowed_total', 0)), C.YELLOW)}/{colored('$' + str(stats.get('loan_repaid_total', 0)), C.CYAN)}",
         f"补贴/天数: {colored(str(profile.get('government_aid_used', 0)), C.YELLOW)}/{colored(str(profile.get('bank_days_elapsed', 0)), C.WHITE)}",
         f"操作/导出: {colored(str(stats.get('operations_count', 0)), C.WHITE)}/{colored(str(profile.get('export_count', 0)), C.WHITE)}",
     ], width=38, title="银行与资产", color=C.YELLOW)
+    asset_box_lines = [
+        f"交易次数: {colored(str(stats.get('asset_trade_count', 0)), C.WHITE)}",
+        f"买入/卖出: {colored('$' + str(stats.get('asset_buy_total', 0)), C.YELLOW)}/{colored('$' + str(stats.get('asset_sell_total', 0)), C.CYAN)}",
+        f"已实现:   {colored('$' + str(stats.get('asset_realized_profit', 0)), C.GREEN if stats.get('asset_realized_profit', 0) >= 0 else C.RED)}",
+        f"被动收入: {colored('$' + str(stats.get('asset_passive_income', 0)), C.CYAN)}",
+        f"浮动盈亏: {colored('$' + str(total_unrealized_profit(profile)), C.GREEN if total_unrealized_profit(profile) >= 0 else C.RED)}",
+        "",
+    ]
+    for asset in ASSET_MARKETS:
+        info = asset_position_summary(profile, asset)
+        asset_box_lines.append(f"{asset['name']}: {colored(str(info['shares']) + '份', C.WHITE)} / {colored('$' + str(info['market_value']), C.MAGENTA if info['market_value'] > 0 else C.DIM)}")
+    asset_box = box(asset_box_lines, width=38, title="典当行与持仓", color=C.MAGENTA)
     system_box = box([
         f"Blackjack: {colored(str(stats.get('blackjacks', 0)), C.YELLOW)}",
         f"Boss 击败: {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
@@ -3194,10 +3906,13 @@ def show_stats(chips, stats, profile):
         f"导出次数: {colored(str(profile.get('export_count', 0)), C.WHITE)}",
         f"今日跑单: {colored('可接' if runner_available(profile) else '已用', C.CYAN if runner_available(profile) else C.DIM)}",
         f"结息进度: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)} 步",
+        f"当前地点: {colored(location_label(profile.get('location', 'home')), C.MAGENTA)}",
     ], width=34, title="系统与进度", color=C.GREEN)
     print(render_box_columns([overview_box, fire_box], gap=2))
     print()
     print(render_box_columns([bank_box, system_box], gap=2))
+    print()
+    print(asset_box)
     print()
     print(render_box_columns([
         box(game_panel_lines(stats, "blackjack", "Blackjack", "BJ"), width=34, title="Blackjack", color=C.CYAN),
