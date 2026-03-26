@@ -1511,19 +1511,19 @@ def mini_chart(history, width=16):
 def pawnshop_asset_box_lines(profile, asset, index):
     info = asset_position_summary(profile, asset)
     effect = asset_news_effect(profile, asset["id"])
-    news_text = "无"
+    news_text = "平"
     news_color = C.DIM
     if effect["items"]:
         total = effect["drift_bonus"] * 100
         news_text = f"{format_pct(total)} x{max(item.get('days_left', 1) for item in effect['items'])}天"
         news_color = C.GREEN if total >= 0 else C.RED
-    yield_text = f"{asset['yield_rate'] * 100:.2f}%/天" if asset["yield_rate"] > 0 else "纯波动"
+    price_color = C.GREEN if info["price"] >= info["prev_price"] else C.RED
+    pnl_color = C.GREEN if info["unrealized"] >= 0 else C.RED
+    yield_text = f"息{asset['yield_rate'] * 100:.2f}%" if asset["yield_rate"] > 0 else "纯波动"
     return [
-        f"{index}. {asset['name']}  {asset['tag']}",
-        f"价 ${info['price']}  仓 {info['shares']}  成 ${info['avg_cost']:.1f}",
-        f"浮 ${info['unrealized']}  已 ${safe_int(info['state'].get('realized_profit', 0), 0)}",
-        f"息 {yield_text}  消 {colored(news_text, news_color)}",
-        f"图 {mini_chart(info['state'].get('history', []), width=18)}",
+        f"{index}. {colored(asset['name'], C.MAGENTA)} {colored(asset['tag'], C.CYAN)} {colored('$' + str(info['price']), price_color)}",
+        f"仓{colored(str(info['shares']), C.WHITE)} 成${info['avg_cost']:.1f} 浮{colored('$' + str(info['unrealized']), pnl_color)}",
+        f"{yield_text} 消{colored(news_text, news_color)} {colored(mini_chart(info['state'].get('history', []), width=8), C.YELLOW)}",
     ]
 
 
@@ -1708,15 +1708,15 @@ def location_hint_lines(current):
     for key, label, loc in items:
         text = f"{key}{label}"
         if loc == current:
-            parts.append(colored(f"[{text}]", C.WHITE))
+            parts.append(colored(f"[{text}]", C.GREEN))
         else:
-            parts.append(colored(text, C.DIM))
+            parts.append(colored(text, C.CYAN))
     parts.extend([
-        colored("S统计", C.DIM),
-        colored("E导出", C.DIM),
-        colored("G补贴", C.DIM),
-        colored("SKIP跳天", C.DIM),
-        colored("0退出" if current == "home" else "0回家", C.WHITE),
+        colored("S统计", C.YELLOW),
+        colored("E导出", C.MAGENTA),
+        colored("G补贴", C.YELLOW),
+        colored("SKIP跳天", C.BLUE),
+        colored("0退出" if current == "home" else "0回家", C.RED),
     ])
     return ["  ".join(parts)]
 
@@ -1755,7 +1755,7 @@ def header(chips, slot=None, stats=None, profile=None):
         if stats:
             slot_info += f"  W{stats.get('wins',0)}/L{stats.get('losses',0)}"
         lines.append(colored(slot_info, C.DIM))
-    print(box(lines, width=72, color=C.WHITE))
+    print(box(lines, width=72, color=C.YELLOW))
 
 
 def global_command_result(choice, chips, slot, stats, profile):
@@ -1863,7 +1863,7 @@ def bank_menu(chips, slot, stats, profile):
             ], width=42, title="规则说明", color=C.WHITE)
         ]))
         print()
-        print(box(location_hint_lines("bank"), width=72, title="全局快捷", color=C.DIM))
+        print(box(location_hint_lines("bank"), width=72, title="全局快捷", color=C.CYAN))
         if shortfall > 0:
             print(colored(f"  当前现金欠款 ${shortfall}，在补齐前不能参加任何赌桌。", C.RED))
 
@@ -2296,23 +2296,28 @@ def pawnshop_menu(chips, slot, stats, profile):
         header(chips, slot, stats, profile)
         print(colored("\n  ── 典当行 ──\n", C.MAGENTA))
         asset_boxes = [
-            box(pawnshop_asset_box_lines(profile, asset, idx), width=36, title=asset["name"], color=C.WHITE)
+            box(
+                pawnshop_asset_box_lines(profile, asset, idx),
+                width=22,
+                title=str(idx),
+                color=C.CYAN if asset["tag"] == "稳健" else (C.YELLOW if asset["tag"] == "经营" else C.MAGENTA),
+            )
             for idx, asset in enumerate(ASSET_MARKETS, start=1)
         ]
-        for start in range(0, len(asset_boxes), 2):
-            print(render_box_columns(asset_boxes[start:start + 2], gap=2))
+        for start in range(0, len(asset_boxes), 3):
+            print(render_box_columns(asset_boxes[start:start + 3], gap=2))
             print()
         print(render_box_columns([
-            box(pawnshop_portfolio_lines(profile), width=34, title="投资组合", color=C.WHITE),
-            box(pawnshop_driver_lines(profile), width=36, title="价格驱动", color=C.WHITE),
+            box(pawnshop_portfolio_lines(profile), width=34, title="投资组合", color=C.CYAN),
+            box(pawnshop_driver_lines(profile), width=36, title="价格驱动", color=C.YELLOW),
         ], gap=2))
         print()
         print(render_box_columns([
-            box(pawnshop_trade_help_lines(), width=34, title="交易命令", color=C.WHITE),
-            box(pawnshop_news_lines(profile), width=36, title="消息面", color=C.WHITE),
+            box(pawnshop_trade_help_lines(), width=34, title="交易命令", color=C.GREEN),
+            box(pawnshop_news_lines(profile), width=36, title="消息面", color=C.MAGENTA),
         ], gap=2))
         print()
-        print(box(location_hint_lines("pawnshop"), width=72, title="全局快捷", color=C.DIM))
+        print(box(location_hint_lines("pawnshop"), width=72, title="全局快捷", color=C.CYAN))
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         trade = parse_pawnshop_trade_command(choice)
         if trade:
@@ -4163,7 +4168,7 @@ def home_menu(chips, slot, stats, profile):
         print()
         print(render_box_columns([left, right], gap=3))
         print()
-        print(box(location_hint_lines("home"), width=72, title="全局快捷", color=C.DIM))
+        print(box(location_hint_lines("home"), width=72, title="全局快捷", color=C.CYAN))
         if cash_shortfall > 0:
             print(colored(f"  现金当前为负 ${cash_shortfall}。你不能上赌桌，但还能去银行或典当行处理仓位。", C.RED))
         elif can_claim_government_aid(chips, profile):
@@ -4210,7 +4215,7 @@ def casino_menu(chips, slot, stats, profile):
             ], width=42, title="街区情报", color=C.YELLOW),
         ], gap=2))
         print()
-        print(box(location_hint_lines("casino"), width=72, title="全局快捷", color=C.DIM))
+        print(box(location_hint_lines("casino"), width=72, title="全局快捷", color=C.CYAN))
 
         cash_shortfall = debt_shortfall(chips)
         if chips <= 0 and profile.get("bank", 0) > 0:
