@@ -14,8 +14,7 @@ from .cfr import CFRTrainer, CFRTrainerConfig
 from .trainer import EvolutionTrainer, TrainerConfig
 
 
-DEFAULT_SEEDS: Tuple[int, ...] = (18, 42)
-
+DEFAULT_SEEDS: Tuple[int, ...] = (108, 425, 18, 42, 1774421727)
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
