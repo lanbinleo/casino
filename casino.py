@@ -1654,6 +1654,8 @@ def execute_asset_buy(chips, slot, stats, profile, asset, shares):
         pause()
         return chips
     before = state_snapshot(chips, profile)
+    cash_before = chips
+    bank_before = profile.get("bank", 0)
     state = market_asset_state(profile, asset["id"])
     cost = shares * price
     bank_used = max(0, cost - max(0, safe_int(chips, 0)))
@@ -1687,6 +1689,7 @@ def execute_asset_buy(chips, slot, stats, profile, asset, shares):
     print(colored(f"  已买入 {asset['name']} x{shares}，花费 ${cost}。", C.GREEN))
     if bank_used > 0:
         print(colored(f"  其中自动从银行调入 ${bank_used}。", C.CYAN))
+    print(colored(f"  现金 ${cash_before} -> ${chips} / 银行 ${bank_before} -> ${profile.get('bank', 0)}", C.DIM))
     for notice in notices:
         print(notice)
     pause()
