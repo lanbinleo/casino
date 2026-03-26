@@ -49,6 +49,18 @@ ASSET_MARKETS = [
         "desc": "像比银行更灵活一点的慢收益票据。",
     },
     {
+        "id": "harbor_shipping",
+        "name": "码头航运股",
+        "tag": "经营",
+        "base_price": 112,
+        "drift": 0.001,
+        "volatility": 0.060,
+        "yield_rate": 0.0020,
+        "floor": 60,
+        "ceiling": 210,
+        "desc": "吃港口吞吐量，旺季很香，停航时会闷得难受。",
+    },
+    {
         "id": "vending_route",
         "name": "售货机点位",
         "tag": "经营",
@@ -73,6 +85,42 @@ ASSET_MARKETS = [
         "desc": "和街区资金周转挂钩，回报稳定但不算安静。",
     },
     {
+        "id": "arcade_lease",
+        "name": "街机厅牌照",
+        "tag": "经营",
+        "base_price": 95,
+        "drift": 0.002,
+        "volatility": 0.055,
+        "yield_rate": 0.0028,
+        "floor": 48,
+        "ceiling": 180,
+        "desc": "年轻人多的时候很赚，一阵风向不对也会掉头。",
+    },
+    {
+        "id": "clinic_receipts",
+        "name": "诊所应收单",
+        "tag": "稳健",
+        "base_price": 134,
+        "drift": 0.002,
+        "volatility": 0.028,
+        "yield_rate": 0.0018,
+        "floor": 98,
+        "ceiling": 188,
+        "desc": "回款慢但稳，适合拿来垫长期底仓。",
+    },
+    {
+        "id": "machine_parts",
+        "name": "零件仓单",
+        "tag": "投机",
+        "base_price": 88,
+        "drift": 0.000,
+        "volatility": 0.085,
+        "yield_rate": 0.0000,
+        "floor": 34,
+        "ceiling": 205,
+        "desc": "吃抢修潮和缺货传闻，节奏很快。",
+    },
+    {
         "id": "lamp_oil",
         "name": "洋油期货",
         "tag": "投机",
@@ -83,6 +131,72 @@ ASSET_MARKETS = [
         "floor": 35,
         "ceiling": 260,
         "desc": "纯看情绪和传闻，涨得快，跌起来也快。",
+    },
+]
+PAWNSHOP_NEWS_EVENTS = [
+    {
+        "id": "bond_guarantee",
+        "asset_id": "city_bonds",
+        "headline": "旧城议会追加担保，债票连续走强。",
+        "drift_bonus": 0.018,
+        "volatility_bonus": -0.006,
+        "duration": 3,
+    },
+    {
+        "id": "harbor_inspection",
+        "asset_id": "harbor_shipping",
+        "headline": "港口抽检升级，航运股未来几天承压。",
+        "drift_bonus": -0.020,
+        "volatility_bonus": 0.018,
+        "duration": 3,
+    },
+    {
+        "id": "vending_heatwave",
+        "asset_id": "vending_route",
+        "headline": "热浪来了，售货机点位销量有望连涨几天。",
+        "drift_bonus": 0.024,
+        "volatility_bonus": 0.008,
+        "duration": 2,
+    },
+    {
+        "id": "pawn_crackdown",
+        "asset_id": "pawn_notes",
+        "headline": "几家典当铺被查账，凭单市场先紧后松。",
+        "drift_bonus": -0.015,
+        "volatility_bonus": 0.012,
+        "duration": 4,
+    },
+    {
+        "id": "arcade_tournament",
+        "asset_id": "arcade_lease",
+        "headline": "街机赛开打，牌照租值被连续抬价。",
+        "drift_bonus": 0.020,
+        "volatility_bonus": 0.010,
+        "duration": 3,
+    },
+    {
+        "id": "clinic_backlog",
+        "asset_id": "clinic_receipts",
+        "headline": "诊所回款延迟，应收单接下来几天偏弱。",
+        "drift_bonus": -0.012,
+        "volatility_bonus": 0.004,
+        "duration": 4,
+    },
+    {
+        "id": "parts_shortage",
+        "asset_id": "machine_parts",
+        "headline": "抢修潮引爆缺货，零件仓单进入高波动窗口。",
+        "drift_bonus": 0.022,
+        "volatility_bonus": 0.022,
+        "duration": 3,
+    },
+    {
+        "id": "oil_rumor",
+        "asset_id": "lamp_oil",
+        "headline": "黑市传出断供风声，洋油期货情绪连续发酵。",
+        "drift_bonus": 0.030,
+        "volatility_bonus": 0.030,
+        "duration": 3,
     },
 ]
 
@@ -232,6 +346,8 @@ def default_asset_state(asset):
 def default_pawnshop_state():
     return {
         "assets": {asset["id"]: default_asset_state(asset) for asset in ASSET_MARKETS},
+        "active_news": [],
+        "news_history": [],
     }
 
 
@@ -350,6 +466,28 @@ def normalize_pawnshop_state(state):
             asset_id = asset["id"]
             if asset_id in state:
                 base["assets"][asset_id] = normalize_asset_state(asset_id, state[asset_id])
+    if isinstance(state, dict):
+        active_news = state.get("active_news", [])
+        news_history = state.get("news_history", [])
+        if isinstance(active_news, list):
+            cleaned = []
+            for item in active_news[-8:]:
+                if not isinstance(item, dict):
+                    continue
+                asset_id = str(item.get("asset_id", "") or "")
+                if asset_id not in asset_definition_map():
+                    continue
+                cleaned.append({
+                    "id": str(item.get("id", "") or ""),
+                    "asset_id": asset_id,
+                    "headline": str(item.get("headline", "") or ""),
+                    "drift_bonus": safe_float(item.get("drift_bonus", 0.0), 0.0),
+                    "volatility_bonus": safe_float(item.get("volatility_bonus", 0.0), 0.0),
+                    "days_left": max(1, safe_int(item.get("days_left", 1), 1)),
+                })
+            base["active_news"] = cleaned
+        if isinstance(news_history, list):
+            base["news_history"] = [str(item) for item in news_history[-10:]]
     return base
 
 
@@ -510,18 +648,129 @@ def asset_price_change_pct(old_price, new_price):
     return (new_price - old_price) / old_price * 100
 
 
+def strip_ansi(text):
+    import re
+    return re.sub(r'\033\[[0-9;]*m', '', str(text))
+
+
+def wrap_plain_text(text, width):
+    text = str(text)
+    if width <= 0:
+        return [""]
+    lines = []
+    for raw_line in text.splitlines() or [""]:
+        remaining = raw_line
+        if remaining == "":
+            lines.append("")
+            continue
+        while len_display(remaining) > width:
+            cut = max(1, width)
+            piece = remaining[:cut]
+            while len_display(piece) > width and cut > 1:
+                cut -= 1
+                piece = remaining[:cut]
+            lines.append(piece)
+            remaining = remaining[cut:]
+        lines.append(remaining)
+    return lines or [""]
+
+
+def format_pct(value):
+    return f"{value:+.1f}%"
+
+
+def pawnshop_state(profile):
+    return profile.setdefault("pawnshop", default_pawnshop_state())
+
+
+def active_news_items(profile):
+    return pawnshop_state(profile).setdefault("active_news", [])
+
+
+def recent_news_items(profile):
+    return pawnshop_state(profile).setdefault("news_history", [])
+
+
+def asset_news_effect(profile, asset_id):
+    drift_bonus = 0.0
+    volatility_bonus = 0.0
+    active = []
+    for item in active_news_items(profile):
+        if item.get("asset_id") == asset_id:
+            drift_bonus += safe_float(item.get("drift_bonus", 0.0), 0.0)
+            volatility_bonus += safe_float(item.get("volatility_bonus", 0.0), 0.0)
+            active.append(item)
+    return {
+        "drift_bonus": drift_bonus,
+        "volatility_bonus": volatility_bonus,
+        "items": active,
+    }
+
+
+def maybe_spawn_market_news(profile):
+    if random.random() >= 0.38:
+        return None
+    active_ids = {item.get("id") for item in active_news_items(profile)}
+    candidates = [item for item in PAWNSHOP_NEWS_EVENTS if item["id"] not in active_ids]
+    if not candidates:
+        candidates = list(PAWNSHOP_NEWS_EVENTS)
+    event = dict(random.choice(candidates))
+    event["days_left"] = event.pop("duration")
+    active_news_items(profile).append(event)
+    if len(active_news_items(profile)) > 8:
+        pawnshop_state(profile)["active_news"] = active_news_items(profile)[-8:]
+    recent_news_items(profile).append(event["headline"])
+    pawnshop_state(profile)["news_history"] = recent_news_items(profile)[-10:]
+    return event
+
+
+def advance_market_news(profile):
+    remaining = []
+    expired = []
+    for item in active_news_items(profile):
+        days_left = max(0, safe_int(item.get("days_left", 1), 1) - 1)
+        if days_left > 0:
+            next_item = dict(item)
+            next_item["days_left"] = days_left
+            remaining.append(next_item)
+        else:
+            expired.append(item)
+    pawnshop_state(profile)["active_news"] = remaining
+    return expired
+
+
+def pawnshop_news_lines(profile):
+    lines = []
+    for item in active_news_items(profile):
+        asset = asset_definition_map().get(item.get("asset_id"))
+        if not asset:
+            continue
+        drift = safe_float(item.get("drift_bonus", 0.0), 0.0) * 100
+        days_left = safe_int(item.get("days_left", 1), 1)
+        tone = C.GREEN if drift >= 0 else C.RED
+        lines.append(
+            f"{asset['name']} {colored(format_pct(drift), tone)} x{days_left}天 | {item.get('headline', '')}"
+        )
+    if not lines:
+        lines.append(colored("街区消息平静，今天主要还是看自然波动。", C.DIM))
+    return lines
+
+
 def apply_asset_market_day(chips, stats, profile):
     messages = []
     before = state_snapshot(chips, profile)
     passive_income = 0
     biggest_move = None
+    spawned_news = maybe_spawn_market_news(profile)
 
     for asset in ASSET_MARKETS:
         state = market_asset_state(profile, asset["id"])
         old_price = max(1, safe_int(state.get("price", asset["base_price"]), asset["base_price"]))
+        news_effect = asset_news_effect(profile, asset["id"])
         reversion = ((asset["base_price"] - old_price) / asset["base_price"]) * 0.12
-        shock = random.uniform(-asset["volatility"], asset["volatility"])
-        pct_move = asset["drift"] + reversion + shock
+        volatility = max(0.005, asset["volatility"] + news_effect["volatility_bonus"])
+        shock = random.uniform(-volatility, volatility)
+        pct_move = asset["drift"] + news_effect["drift_bonus"] + reversion + shock
         new_price = int(round(old_price * (1 + pct_move)))
         new_price = max(asset["floor"], min(asset["ceiling"], new_price))
         if new_price == old_price and random.random() < 0.45:
@@ -540,6 +789,7 @@ def apply_asset_market_day(chips, stats, profile):
                 "to": new_price,
                 "move_abs": move_abs,
                 "move_pct": asset_price_change_pct(old_price, new_price),
+                "news_count": len(news_effect["items"]),
             }
 
         shares = safe_int(state.get("shares", 0), 0)
@@ -550,9 +800,12 @@ def apply_asset_market_day(chips, stats, profile):
             state["passive_income_total"] = safe_int(state.get("passive_income_total", 0), 0) + income
             passive_income += income
 
+    expired_news = advance_market_news(profile)
     details = {
         "day": profile.get("bank_days_elapsed", 0),
         "passive_income": passive_income,
+        "spawned_news": spawned_news,
+        "expired_news": [item.get("headline", "") for item in expired_news],
         "assets": {
             asset["id"]: {
                 "price": market_asset_state(profile, asset["id"])["price"],
@@ -570,6 +823,8 @@ def apply_asset_market_day(chips, stats, profile):
                 direction_color,
             )
         )
+    if spawned_news:
+        messages.append(colored(f"  [街区消息] {spawned_news['headline']}", C.WHITE))
     if passive_income > 0:
         messages.append(colored(f"  [经营分红] 今日被动收入已打入银行 +${passive_income}", C.CYAN))
     append_history(
@@ -1131,21 +1386,29 @@ def pause(msg="按 Enter 继续..."):
 def box(lines, width=40, title="", color=C.CYAN):
     """画一个方框"""
     w = width - 2
+    content_width = max(1, w - 1)
     result = []
     if title:
         t = f" {title} "
-        pad = w - len_display(t)
+        if len_display(t) > w:
+            t = wrap_plain_text(title, max(1, w - 2))[0]
+            t = f" {t} "
+        pad = max(0, w - len_display(t))
         left = pad // 2
         right = pad - left
         result.append(colored(f"┌{'─' * left}{t}{'─' * right}┐", color))
     else:
         result.append(colored(f"┌{'─' * w}┐", color))
-    for line in lines:
-        display_len = len_display(line)
-        spacing = w - display_len
-        if spacing < 0:
-            spacing = 0
-        result.append(colored("│", color) + f" {line}{' ' * (spacing - 1)}" + colored("│", color))
+    for raw_line in lines:
+        wrapped = [str(raw_line)]
+        if len_display(raw_line) > content_width:
+            wrapped = wrap_plain_text(strip_ansi(raw_line), content_width)
+        for line in wrapped:
+            display_len = len_display(line)
+            spacing = content_width - display_len
+            if spacing < 0:
+                spacing = 0
+            result.append(colored("│", color) + f" {line}{' ' * spacing}" + colored("│", color))
     result.append(colored(f"└{'─' * w}┘", color))
     return "\n".join(result)
 
@@ -1178,8 +1441,7 @@ def render_box_columns(boxes, gap=3):
 
 def len_display(s):
     """计算字符串的显示宽度（去掉 ANSI 转义码）"""
-    import re
-    clean = re.sub(r'\033\[[0-9;]*m', '', s)
+    clean = strip_ansi(s)
     # 中文字符占2格
     width = 0
     for ch in clean:
@@ -1234,6 +1496,37 @@ def asset_chart_lines(profile, asset):
     return lines
 
 
+def mini_chart(history, width=16):
+    marks = "._-:=+*#%@"
+    if not history:
+        history = [0]
+    if len(history) > width:
+        history = history[-width:]
+    low = min(history)
+    high = max(history)
+    span = max(1, high - low)
+    return "".join(marks[min(len(marks) - 1, int((value - low) / span * (len(marks) - 1)))] for value in history)
+
+
+def pawnshop_asset_box_lines(profile, asset, index):
+    info = asset_position_summary(profile, asset)
+    effect = asset_news_effect(profile, asset["id"])
+    news_text = "无"
+    news_color = C.DIM
+    if effect["items"]:
+        total = effect["drift_bonus"] * 100
+        news_text = f"{format_pct(total)} x{max(item.get('days_left', 1) for item in effect['items'])}天"
+        news_color = C.GREEN if total >= 0 else C.RED
+    yield_text = f"{asset['yield_rate'] * 100:.2f}%/天" if asset["yield_rate"] > 0 else "纯波动"
+    return [
+        f"{index}. {asset['name']}  {asset['tag']}",
+        f"价 ${info['price']}  仓 {info['shares']}  成 ${info['avg_cost']:.1f}",
+        f"浮 ${info['unrealized']}  已 ${safe_int(info['state'].get('realized_profit', 0), 0)}",
+        f"息 {yield_text}  消 {colored(news_text, news_color)}",
+        f"图 {mini_chart(info['state'].get('history', []), width=18)}",
+    ]
+
+
 def pawnshop_market_lines(profile):
     lines = []
     for idx, asset in enumerate(ASSET_MARKETS, start=1):
@@ -1264,28 +1557,168 @@ def pawnshop_portfolio_lines(profile):
     ]
 
 
+def pawnshop_driver_lines(profile):
+    return [
+        "价格 = 基础漂移 + 均值回归 + 日波动 + 消息面",
+        "消息面会持续 2-4 天，期间会改变涨跌倾向和波动。",
+        "经营/稳健品种会在结息日自动打分红到银行。",
+        "现金见底时依然能来这里卖仓，不会按破产处理。",
+    ]
+
+
+def pawnshop_trade_help_lines():
+    return [
+        "B1 3  买入 1 号资产 3 份",
+        "S4 2  卖出 4 号资产 2 份",
+        "V6    查看 6 号资产详细图表",
+        "也支持 BUY 1 3 / SELL 4 2 / VIEW 6",
+    ]
+
+
+def parse_pawnshop_trade_command(choice):
+    tokens = (choice or "").strip().upper().replace(",", " ").split()
+    compact = (choice or "").strip().upper().replace(" ", "")
+    if not tokens and not compact:
+        return None
+    if len(tokens) >= 2 and tokens[0][0:1] in {"B", "S", "V"} and tokens[0][1:].isdigit():
+        asset_index = int(tokens[0][1:])
+        if tokens[0][0] == "V":
+            return {"action": "view", "asset_index": asset_index, "shares": 0}
+        if tokens[1].isdigit():
+            return {"action": "buy" if tokens[0][0] == "B" else "sell", "asset_index": asset_index, "shares": int(tokens[1])}
+    if compact and compact[0] in {"B", "S", "V"} and len(compact) > 1:
+        action = compact[0]
+        tail = compact[1:]
+        if action == "V" and tail.isdigit():
+            return {"action": "view", "asset_index": int(tail), "shares": 0}
+        parts = tail.split("/")
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            return {"action": "buy" if action == "B" else "sell", "asset_index": int(parts[0]), "shares": int(parts[1])}
+        digits = []
+        rest = []
+        for ch in tail:
+            if ch.isdigit() and not rest:
+                digits.append(ch)
+            else:
+                rest.append(ch)
+        if digits and "".join(rest).isdigit():
+            return {"action": "buy" if action == "B" else "sell", "asset_index": int("".join(digits)), "shares": int("".join(rest))}
+    if not tokens:
+        return None
+    if tokens[0] in {"BUY", "B", "SELL", "S"} and len(tokens) >= 3 and tokens[1].isdigit() and tokens[2].isdigit():
+        return {
+            "action": "buy" if tokens[0] in {"BUY", "B"} else "sell",
+            "asset_index": int(tokens[1]),
+            "shares": int(tokens[2]),
+        }
+    if tokens[0] in {"VIEW", "V"} and len(tokens) >= 2 and tokens[1].isdigit():
+        return {"action": "view", "asset_index": int(tokens[1]), "shares": 0}
+    return None
+
+
+def asset_by_index(asset_index):
+    if 1 <= asset_index <= len(ASSET_MARKETS):
+        return ASSET_MARKETS[asset_index - 1]
+    return None
+
+
+def execute_asset_buy(chips, slot, stats, profile, asset, shares):
+    info = asset_position_summary(profile, asset)
+    price = info["price"]
+    max_shares = chips // price
+    if shares <= 0 or max_shares <= 0 or shares > max_shares:
+        print(colored("  买入数量超出当前现金可承受范围。", C.RED))
+        pause()
+        return chips
+    before = state_snapshot(chips, profile)
+    state = market_asset_state(profile, asset["id"])
+    cost = shares * price
+    total_basis = safe_float(state.get("avg_cost", 0.0), 0.0) * safe_int(state.get("shares", 0), 0) + cost
+    state["shares"] = safe_int(state.get("shares", 0), 0) + shares
+    state["avg_cost"] = total_basis / state["shares"]
+    chips -= cost
+    stats["asset_trade_count"] += 1
+    stats["asset_buy_total"] += cost
+    notices = record_operations(chips, stats, profile, 1)
+    append_history(
+        stats,
+        profile,
+        "pawnshop",
+        "buy_asset",
+        details={"asset_id": asset["id"], "asset_name": asset["name"], "shares": shares, "price": price, "cost": cost},
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=1,
+    )
+    auto_save(slot, chips, stats, profile)
+    print(colored(f"  已买入 {asset['name']} x{shares}，花费 ${cost}。", C.GREEN))
+    for notice in notices:
+        print(notice)
+    pause()
+    return chips
+
+
+def execute_asset_sell(chips, slot, stats, profile, asset, shares):
+    info = asset_position_summary(profile, asset)
+    if shares <= 0 or shares > info["shares"]:
+        print(colored("  卖出数量超出当前持仓。", C.RED))
+        pause()
+        return chips
+    before = state_snapshot(chips, profile)
+    state = market_asset_state(profile, asset["id"])
+    revenue = shares * info["price"]
+    realized = int(round((info["price"] - safe_float(state.get("avg_cost", 0.0), 0.0)) * shares))
+    chips += revenue
+    state["shares"] = safe_int(state.get("shares", 0), 0) - shares
+    if state["shares"] <= 0:
+        state["shares"] = 0
+        state["avg_cost"] = 0.0
+    state["realized_profit"] = safe_int(state.get("realized_profit", 0), 0) + realized
+    stats["asset_trade_count"] += 1
+    stats["asset_sell_total"] += revenue
+    stats["asset_realized_profit"] += realized
+    notices = record_operations(chips, stats, profile, 1)
+    append_history(
+        stats,
+        profile,
+        "pawnshop",
+        "sell_asset",
+        details={"asset_id": asset["id"], "asset_name": asset["name"], "shares": shares, "price": info["price"], "revenue": revenue, "realized_profit": realized},
+        before=before,
+        after=state_snapshot(chips, profile),
+        operation_delta=1,
+    )
+    auto_save(slot, chips, stats, profile)
+    print(colored(f"  已卖出 {asset['name']} x{shares}，回笼 ${revenue}。", C.GREEN))
+    print(colored(f"  本次已实现盈亏 ${realized}。", C.GREEN if realized >= 0 else C.RED))
+    for notice in notices:
+        print(notice)
+    pause()
+    return chips
+
+
 def location_hint_lines(current):
     items = [
-        ("H", "家里", "home"),
-        ("C", "赌场", "casino"),
-        ("B", "银行", "bank"),
-        ("P", "典当行", "pawnshop"),
+        ("7/H", "家", "home"),
+        ("8/C", "场", "casino"),
+        ("9/B", "银", "bank"),
+        ("+/P", "当", "pawnshop"),
     ]
-    lines = []
+    parts = []
     for key, label, loc in items:
-        text = f"{key} {label}"
+        text = f"{key}{label}"
         if loc == current:
-            lines.append(colored(text + " (当前)", C.GREEN))
+            parts.append(colored(f"[{text}]", C.WHITE))
         else:
-            lines.append(colored(text, C.CYAN))
-    lines.extend([
-        colored("S 战绩统计", C.YELLOW),
-        colored("E 导出复盘", C.YELLOW),
-        colored("G 领取补贴", C.YELLOW),
-        colored("SKIP 跳到下一天", C.YELLOW),
-        colored("0 保存并离开", C.RED),
+            parts.append(colored(text, C.DIM))
+    parts.extend([
+        colored("S统计", C.DIM),
+        colored("E导出", C.DIM),
+        colored("G补贴", C.DIM),
+        colored("SKIP跳天", C.DIM),
+        colored("0退出" if current == "home" else "0回家", C.WHITE),
     ])
-    return lines
+    return ["  ".join(parts)]
 
 
 def header(chips, slot=None, stats=None, profile=None):
@@ -1322,7 +1755,7 @@ def header(chips, slot=None, stats=None, profile=None):
         if stats:
             slot_info += f"  W{stats.get('wins',0)}/L{stats.get('losses',0)}"
         lines.append(colored(slot_info, C.DIM))
-    print(box(lines, width=68, color=C.YELLOW))
+    print(box(lines, width=72, color=C.WHITE))
 
 
 def global_command_result(choice, chips, slot, stats, profile):
@@ -1332,6 +1765,10 @@ def global_command_result(choice, chips, slot, stats, profile):
         "C": "casino",
         "B": "bank",
         "P": "pawnshop",
+        "7": "home",
+        "8": "casino",
+        "9": "bank",
+        "+": "pawnshop",
     }
     if choice in travel_map:
         travel_to(chips, slot, stats, profile, travel_map[choice])
@@ -1355,7 +1792,11 @@ def global_command_result(choice, chips, slot, stats, profile):
         chips = skip_to_next_day(chips, slot, stats, profile)
         return chips, None
     if choice == '0':
-        return chips, "__exit__"
+        current = profile.get("location", "home")
+        if current == "home":
+            return chips, "__exit__"
+        travel_to(chips, slot, stats, profile, "home")
+        return chips, "home"
     return chips, "__local__"
 
 
@@ -1411,7 +1852,7 @@ def bank_menu(chips, slot, stats, profile):
         print(render_box_columns([left_panel, right_panel]))
         print()
         print(render_box_columns([
-            box(action_lines, width=34, title="银行操作", color=C.GREEN),
+            box(action_lines, width=34, title="银行操作", color=C.WHITE),
             box([
                 "取钱后，现金不能超过 净资产 x 安全比率",
                 "借款按一档→二档→三档开放。",
@@ -1419,10 +1860,10 @@ def bank_menu(chips, slot, stats, profile):
                 "现金为负时，可用一键补缺自动回填。",
                 "",
                 colored("提示", C.YELLOW) + "  利率越高越危险，优先还高档贷款。",
-            ], width=42, title="规则说明", color=C.YELLOW)
+            ], width=42, title="规则说明", color=C.WHITE)
         ]))
         print()
-        print(box(location_hint_lines("bank"), width=68, title="全局快捷", color=C.BLUE))
+        print(box(location_hint_lines("bank"), width=72, title="全局快捷", color=C.DIM))
         if shortfall > 0:
             print(colored(f"  当前现金欠款 ${shortfall}，在补齐前不能参加任何赌桌。", C.RED))
 
@@ -1817,11 +2258,13 @@ def pawnshop_sell_asset(chips, slot, stats, profile):
     return chips
 
 
-def pawnshop_show_asset_chart(chips, slot, stats, profile):
-    asset = choose_asset_from_market(chips, slot, stats, profile, title="查看走势")
+def pawnshop_show_asset_chart(chips, slot, stats, profile, asset=None):
+    if asset is None:
+        asset = choose_asset_from_market(chips, slot, stats, profile, title="查看走势")
     if asset is None:
         return
     info = asset_position_summary(profile, asset)
+    effect = asset_news_effect(profile, asset["id"])
     clear()
     header(chips, slot, stats, profile)
     details = [
@@ -1832,6 +2275,7 @@ def pawnshop_show_asset_chart(chips, slot, stats, profile):
         f"持仓成本: {colored('$' + format(info['avg_cost'], '.1f'), C.YELLOW)}",
         f"浮动盈亏: {colored('$' + str(info['unrealized']), C.GREEN if info['unrealized'] >= 0 else C.RED)}",
         f"日收益率: {colored(format(asset['yield_rate'] * 100, '.2f') + '%', C.CYAN if asset['yield_rate'] > 0 else C.DIM)}",
+        f"消息影响: {colored(format_pct(effect['drift_bonus'] * 100), C.GREEN if effect['drift_bonus'] >= 0 else C.RED) if effect['items'] else colored('无', C.DIM)}",
         "",
         asset["desc"],
     ]
@@ -1840,6 +2284,9 @@ def pawnshop_show_asset_chart(chips, slot, stats, profile):
         box(details, width=34, title="资产详情", color=C.CYAN),
         box(asset_chart_lines(profile, asset), width=31, title="近 8 天 ASCII 走势", color=C.MAGENTA),
     ], gap=3))
+    if effect["items"]:
+        print()
+        print(box([f"{item['headline']} (剩 {item['days_left']} 天)" for item in effect["items"]], width=68, title="当前消息", color=C.WHITE))
     pause()
 
 
@@ -1848,25 +2295,41 @@ def pawnshop_menu(chips, slot, stats, profile):
         clear()
         header(chips, slot, stats, profile)
         print(colored("\n  ── 典当行 ──\n", C.MAGENTA))
-        print(box(pawnshop_market_lines(profile), width=68, title="当日行情", color=C.MAGENTA))
-        print()
+        asset_boxes = [
+            box(pawnshop_asset_box_lines(profile, asset, idx), width=36, title=asset["name"], color=C.WHITE)
+            for idx, asset in enumerate(ASSET_MARKETS, start=1)
+        ]
+        for start in range(0, len(asset_boxes), 2):
+            print(render_box_columns(asset_boxes[start:start + 2], gap=2))
+            print()
         print(render_box_columns([
-            box(pawnshop_portfolio_lines(profile), width=34, title="投资组合", color=C.CYAN),
-            box([
-                colored("1", C.GREEN) + "  买入资产",
-                colored("2", C.GREEN) + "  卖出资产",
-                colored("3", C.GREEN) + "  查看走势",
-            ], width=24, title="典当行操作", color=C.GREEN),
-            box([
-                "这里处理长期资产和街区生意。",
-                "每逢银行结息日，资产价格会统一更新。",
-                "带收益的资产会把日收入自动打进银行。",
-                "没现金但有持仓时，不算破产，可来这里卖仓救急。",
-            ], width=34, title="说明", color=C.YELLOW),
+            box(pawnshop_portfolio_lines(profile), width=34, title="投资组合", color=C.WHITE),
+            box(pawnshop_driver_lines(profile), width=36, title="价格驱动", color=C.WHITE),
         ], gap=2))
         print()
-        print(box(location_hint_lines("pawnshop"), width=68, title="全局快捷", color=C.BLUE))
+        print(render_box_columns([
+            box(pawnshop_trade_help_lines(), width=34, title="交易命令", color=C.WHITE),
+            box(pawnshop_news_lines(profile), width=36, title="消息面", color=C.WHITE),
+        ], gap=2))
+        print()
+        print(box(location_hint_lines("pawnshop"), width=72, title="全局快捷", color=C.DIM))
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
+        trade = parse_pawnshop_trade_command(choice)
+        if trade:
+            asset = asset_by_index(trade["asset_index"])
+            if asset is None:
+                print(colored("  资产编号不存在。", C.RED))
+                pause()
+                continue
+            if trade["action"] == "buy":
+                chips = execute_asset_buy(chips, slot, stats, profile, asset, trade["shares"])
+                continue
+            if trade["action"] == "sell":
+                chips = execute_asset_sell(chips, slot, stats, profile, asset, trade["shares"])
+                continue
+            if trade["action"] == "view":
+                pawnshop_show_asset_chart(chips, slot, stats, profile, asset=asset)
+                continue
         chips, global_result = global_command_result(choice, chips, slot, stats, profile)
         if global_result == "__exit__":
             return chips, "__exit__"
@@ -1874,15 +2337,8 @@ def pawnshop_menu(chips, slot, stats, profile):
             return chips, global_result
         if global_result != "__local__":
             continue
-        if choice == '1':
-            chips = pawnshop_buy_asset(chips, slot, stats, profile)
-        elif choice == '2':
-            chips = pawnshop_sell_asset(chips, slot, stats, profile)
-        elif choice == '3':
-            pawnshop_show_asset_chart(chips, slot, stats, profile)
-        else:
-            print(colored("  无效输入。", C.RED))
-            pause()
+        print(colored("  输入交易命令，或者用快捷键切换地点。", C.RED))
+        pause()
 
 
 def claim_government_aid(chips, slot, stats, profile):
@@ -3707,7 +4163,7 @@ def home_menu(chips, slot, stats, profile):
         print()
         print(render_box_columns([left, right], gap=3))
         print()
-        print(box(location_hint_lines("home"), width=68, title="全局快捷", color=C.BLUE))
+        print(box(location_hint_lines("home"), width=72, title="全局快捷", color=C.DIM))
         if cash_shortfall > 0:
             print(colored(f"  现金当前为负 ${cash_shortfall}。你不能上赌桌，但还能去银行或典当行处理仓位。", C.RED))
         elif can_claim_government_aid(chips, profile):
@@ -3754,7 +4210,7 @@ def casino_menu(chips, slot, stats, profile):
             ], width=42, title="街区情报", color=C.YELLOW),
         ], gap=2))
         print()
-        print(box(location_hint_lines("casino"), width=68, title="全局快捷", color=C.BLUE))
+        print(box(location_hint_lines("casino"), width=72, title="全局快捷", color=C.DIM))
 
         cash_shortfall = debt_shortfall(chips)
         if chips <= 0 and profile.get("bank", 0) > 0:
