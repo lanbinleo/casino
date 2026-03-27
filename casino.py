@@ -11,7 +11,7 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.2.2"
+GAME_VERSION = "v1.2.3"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
@@ -25,13 +25,19 @@ MAX_BANK_RATIO = 1.0
 DAILY_OPERATION_COUNT = 20
 MIN_LOAN_AMOUNT = 3000
 PAWNSHOP_COMPACT_HISTORY_DAYS = 8
-PAWNSHOP_EXPANDED_HISTORY_DAYS = 30
+PAWNSHOP_EXPANDED_HISTORY_DAYS = 50
 BANK_DAILY_INTEREST = 0.0012
-LOAN_TIERS = [
+LEGACY_LOAN_TIERS = [
     {"name": "一档", "daily_rate": 0.0035},
     {"name": "二档", "daily_rate": 0.0055},
     {"name": "三档", "daily_rate": 0.0080},
 ]
+LOAN_VIP_MIN_ASSETS = 10 ** 3
+LOAN_MAX_VIP_LEVEL = 9
+LOAN_ABSOLUTE_CAP = 10 ** 12
+VIP_DAILY_RATES = [0.0120, 0.0100, 0.0085, 0.0072, 0.0060, 0.0050, 0.0042, 0.0035, 0.0028]
+HONOR_POINT_COST = 100
+HONOR_TARGET = 10 ** 14
 GLOBAL_SETTINGS = None
 LOCATIONS = {
     "home": "家里",
@@ -47,7 +53,7 @@ ASSET_MARKETS = [
         "base_price": 120,
         "drift": 0.002,
         "volatility": 0.015,
-        "yield_rate": 0.0015,
+        "yield_rate": 0.0014,
         "floor": 90,
         "ceiling": 165,
         "desc": "像比银行更灵活一点的慢收益票据。",
@@ -59,7 +65,7 @@ ASSET_MARKETS = [
         "base_price": 112,
         "drift": 0.001,
         "volatility": 0.060,
-        "yield_rate": 0.0020,
+        "yield_rate": 0.0022,
         "floor": 60,
         "ceiling": 210,
         "desc": "吃港口吞吐量，旺季很香，停航时会闷得难受。",
@@ -71,7 +77,7 @@ ASSET_MARKETS = [
         "base_price": 80,
         "drift": 0.001,
         "volatility": 0.040,
-        "yield_rate": 0.0065,
+        "yield_rate": 0.0044,
         "floor": 45,
         "ceiling": 145,
         "desc": "现金流不错，但偶尔会停电、卡货、被人顺走两瓶汽水。",
@@ -83,7 +89,7 @@ ASSET_MARKETS = [
         "base_price": 140,
         "drift": 0.003,
         "volatility": 0.050,
-        "yield_rate": 0.0024,
+        "yield_rate": 0.0028,
         "floor": 85,
         "ceiling": 220,
         "desc": "和街区资金周转挂钩，回报稳定但不算安静。",
@@ -95,7 +101,7 @@ ASSET_MARKETS = [
         "base_price": 95,
         "drift": 0.002,
         "volatility": 0.055,
-        "yield_rate": 0.0028,
+        "yield_rate": 0.0032,
         "floor": 48,
         "ceiling": 180,
         "desc": "年轻人多的时候很赚，一阵风向不对也会掉头。",
@@ -107,10 +113,58 @@ ASSET_MARKETS = [
         "base_price": 134,
         "drift": 0.002,
         "volatility": 0.028,
-        "yield_rate": 0.0018,
+        "yield_rate": 0.0019,
         "floor": 98,
         "ceiling": 188,
         "desc": "回款慢但稳，适合拿来垫长期底仓。",
+    },
+    {
+        "id": "parking_contract",
+        "name": "停车场租约",
+        "tag": "经营",
+        "base_price": 108,
+        "drift": 0.001,
+        "volatility": 0.035,
+        "yield_rate": 0.0026,
+        "floor": 70,
+        "ceiling": 172,
+        "desc": "现金流平稳，节假日旺，修路时会闷一阵。",
+    },
+    {
+        "id": "market_stalls",
+        "name": "夜市摊位证",
+        "tag": "经营",
+        "base_price": 92,
+        "drift": 0.001,
+        "volatility": 0.048,
+        "yield_rate": 0.0038,
+        "floor": 52,
+        "ceiling": 165,
+        "desc": "人流来了就像印钞，管制一紧也会被砸一下。",
+    },
+    {
+        "id": "cold_storage",
+        "name": "冷库仓位",
+        "tag": "稳健",
+        "base_price": 148,
+        "drift": 0.002,
+        "volatility": 0.022,
+        "yield_rate": 0.0016,
+        "floor": 112,
+        "ceiling": 205,
+        "desc": "偏慢但抗打，适合给大仓做压舱石。",
+    },
+    {
+        "id": "laundry_chain",
+        "name": "洗衣连锁票",
+        "tag": "经营",
+        "base_price": 126,
+        "drift": 0.002,
+        "volatility": 0.038,
+        "yield_rate": 0.0031,
+        "floor": 84,
+        "ceiling": 198,
+        "desc": "日常刚需生意，赚得不炸裂，但下限不错。",
     },
     {
         "id": "machine_parts",
@@ -135,6 +189,18 @@ ASSET_MARKETS = [
         "floor": 35,
         "ceiling": 260,
         "desc": "纯看情绪和传闻，涨得快，跌起来也快。",
+    },
+    {
+        "id": "river_metal",
+        "name": "河道废铜票",
+        "tag": "投机",
+        "base_price": 96,
+        "drift": 0.000,
+        "volatility": 0.092,
+        "yield_rate": 0.0000,
+        "floor": 36,
+        "ceiling": 228,
+        "desc": "吃价差和黑市消息，行情来时很疯。",
     },
 ]
 PAWNSHOP_NEWS_TEMPLATES = [
@@ -199,6 +265,8 @@ def default_stats():
         "asset_sell_total": 0,
         "asset_realized_profit": 0,
         "asset_passive_income": 0,
+        "honor_points_earned": 0,
+        "honor_cash_spent": 0,
         "games": {
             "blackjack": {"plays": 0, "wins": 0, "losses": 0, "pushes": 0, "net": 0, "biggest_win": 0, "special": 0},
             "craps": {"plays": 0, "wins": 0, "losses": 0, "pushes": 0, "net": 0, "biggest_win": 0, "special": 0},
@@ -327,10 +395,11 @@ def default_profile():
         "location": "home",
         "bank": 0,
         "bank_ratio": 0.5,
-        "loans": [{"balance": 0} for _ in LOAN_TIERS],
+        "loans": [],
         "operation_count": 0,
         "bank_days_elapsed": 0,
         "government_aid_used": 0,
+        "honor_points": 0,
         "retired": False,
         "retire_reason": "",
         "retired_at": "",
@@ -378,14 +447,42 @@ def normalize_player_profile(profile):
 
 
 def normalize_loans(loans):
-    base = [{"balance": 0} for _ in LOAN_TIERS]
-    if isinstance(loans, list):
-        for idx, loan in enumerate(loans[:len(LOAN_TIERS)]):
-            if isinstance(loan, dict):
-                base[idx]["balance"] = max(0, safe_int(loan.get("balance", 0), 0))
-            else:
-                base[idx]["balance"] = max(0, safe_int(loan, 0))
-    return base
+    cleaned = []
+    if not isinstance(loans, list):
+        return cleaned
+    for idx, loan in enumerate(loans):
+        if isinstance(loan, dict):
+            balance = max(0, safe_int(loan.get("balance", 0), 0))
+            vip_level = safe_int(loan.get("vip_level", 0), 0)
+            daily_rate = safe_float(loan.get("daily_rate", 0.0), 0.0)
+            label = str(loan.get("label", "") or "")
+        else:
+            balance = max(0, safe_int(loan, 0))
+            vip_level = 0
+            daily_rate = 0.0
+            label = ""
+        if balance <= 0:
+            continue
+        if 1 <= vip_level <= LOAN_MAX_VIP_LEVEL and daily_rate <= 0:
+            daily_rate = vip_daily_rate(vip_level)
+        if vip_level <= 0 and idx < len(LEGACY_LOAN_TIERS):
+            vip_level = idx + 1
+            daily_rate = safe_float(daily_rate or LEGACY_LOAN_TIERS[idx]["daily_rate"], LEGACY_LOAN_TIERS[idx]["daily_rate"])
+            label = label or f"旧{LEGACY_LOAN_TIERS[idx]['name']}"
+        if vip_level <= 0:
+            vip_level = loan_vip_level_for_balance(balance)
+        if daily_rate <= 0:
+            daily_rate = vip_daily_rate(vip_level)
+        if not label:
+            label = f"VIP{vip_level}"
+        cleaned.append({
+            "balance": balance,
+            "vip_level": max(1, min(LOAN_MAX_VIP_LEVEL, vip_level)),
+            "daily_rate": max(0.0, daily_rate),
+            "label": label,
+        })
+    cleaned.sort(key=lambda item: (-safe_float(item.get("daily_rate", 0.0), 0.0), -safe_int(item.get("balance", 0), 0)))
+    return cleaned
 
 
 def normalize_global_settings(settings):
@@ -554,6 +651,7 @@ def normalize_profile(profile):
     base["location"] = location
     base["bank_ratio"] = min(MAX_BANK_RATIO, max(MIN_BANK_RATIO, safe_float(base.get("bank_ratio", 0.5), 0.5)))
     base["bank"] = max(0, safe_int(base.get("bank", 0), 0))
+    base["honor_points"] = max(0, safe_int(base.get("honor_points", 0), 0))
     base["operation_count"] = max(0, safe_int(base.get("operation_count", 0), 0))
     base["bank_days_elapsed"] = max(0, safe_int(base.get("bank_days_elapsed", 0), 0))
     base["export_count"] = max(0, safe_int(base.get("export_count", 0), 0))
@@ -599,70 +697,70 @@ def update_career_high(chips, profile):
     profile["career_high_assets"] = max(profile.get("career_high_assets", INITIAL_CHIPS), total_assets(chips, profile))
 
 
-def loan_tier_cap(chips, profile):
+def vip_threshold(level):
+    level = max(1, min(LOAN_MAX_VIP_LEVEL, safe_int(level, 1)))
+    return 10 ** (level + 2)
+
+
+def vip_daily_rate(level):
+    level = max(1, min(LOAN_MAX_VIP_LEVEL, safe_int(level, 1)))
+    return VIP_DAILY_RATES[level - 1]
+
+
+def loan_vip_level_for_balance(balance):
+    balance = max(0, safe_int(balance, 0))
+    for level in range(LOAN_MAX_VIP_LEVEL, 0, -1):
+        if balance >= vip_threshold(level):
+            return level
+    return 1
+
+
+def current_vip_level(chips, profile):
     assets = total_assets(chips, profile)
-    if assets <= 0:
+    if assets < LOAN_VIP_MIN_ASSETS:
         return 0
-    return max(MIN_LOAN_AMOUNT, int(assets * 2))
+    for level in range(LOAN_MAX_VIP_LEVEL, 0, -1):
+        if assets >= vip_threshold(level):
+            return level
+    return 0
 
 
-def next_loan_tier_index(chips, profile):
-    cap = loan_tier_cap(chips, profile)
-    if cap <= 0:
-        return None
-    loans = profile.get("loans", [])
-    for idx, loan in enumerate(loans):
-        balance = safe_int(loan.get("balance", 0), 0)
-        if balance < cap:
-            if idx == 0:
-                return idx
-            prev_balance = safe_int(loans[idx - 1].get("balance", 0), 0)
-            if prev_balance >= cap:
-                return idx
-            return None
-    return None
+def current_vip_unit(chips, profile):
+    level = current_vip_level(chips, profile)
+    return vip_threshold(level) if level > 0 else 0
 
 
-def loan_borrow_plan(chips, profile, amount=None):
-    cap = loan_tier_cap(chips, profile)
-    if cap <= 0:
-        return []
-    loans = profile.get("loans", [])
-    remaining_amount = None if amount is None else max(0, safe_int(amount, 0))
-    allocations = []
-    previous_after = None
-    for idx, tier in enumerate(LOAN_TIERS):
-        balance = safe_int(loans[idx].get("balance", 0), 0)
-        if idx > 0 and previous_after is not None and previous_after < cap:
-            break
-        remaining_cap = max(0, cap - balance)
-        take = remaining_cap if remaining_amount is None else min(remaining_cap, remaining_amount)
-        if take > 0:
-            allocations.append({
-                "tier_index": idx,
-                "tier_name": tier["name"],
-                "daily_rate": tier["daily_rate"],
-                "amount": take,
-                "balance_before": balance,
-                "balance_after": balance + take,
-            })
-        previous_after = balance + take
-        if remaining_amount is not None:
-            remaining_amount -= take
-            if remaining_amount <= 0:
-                break
-    return allocations
+def current_vip_total_cap(chips, profile):
+    level = current_vip_level(chips, profile)
+    if level <= 0:
+        return 0
+    return min(LOAN_ABSOLUTE_CAP, vip_threshold(level) * 10)
+
+
+def loan_label(loan):
+    label = str(loan.get("label", "") or "").strip()
+    if label:
+        return label
+    return f"VIP{max(1, min(LOAN_MAX_VIP_LEVEL, safe_int(loan.get('vip_level', 1), 1)))}"
+
+
+def active_loans(profile):
+    return [loan for loan in normalize_loans(profile.get("loans", [])) if safe_int(loan.get("balance", 0), 0) > 0]
 
 
 def max_loan_borrow_amount(chips, profile):
-    return sum(item["amount"] for item in loan_borrow_plan(chips, profile))
+    cap = current_vip_total_cap(chips, profile)
+    if cap <= 0:
+        return 0
+    return max(0, cap - total_debt(profile))
 
 
 def min_loan_borrow_amount(chips, profile):
     max_amount = max_loan_borrow_amount(chips, profile)
-    if max_amount <= 0:
+    unit = current_vip_unit(chips, profile)
+    if max_amount <= 0 or unit <= 0 or max_amount < unit:
         return 0
-    return min(MIN_LOAN_AMOUNT, max_amount)
+    return unit
 
 
 def operation_progress(profile):
@@ -953,7 +1051,7 @@ def apply_asset_market_day(chips, stats, profile):
     if spawned_news:
         messages.append(colored(f"  [街区消息] {spawned_news['headline']}", C.WHITE))
     if passive_income > 0:
-        messages.append(colored(f"  [经营分红] 今日被动收入已打入银行 +${passive_income}", C.CYAN))
+        messages.append(colored(f"  [经营分红] 今日被动收入已打入银行 +{fmt_money(passive_income)}", C.CYAN))
     append_history(
         stats,
         profile,
@@ -976,24 +1074,26 @@ def apply_bank_day(chips, stats, profile):
         profile["bank"] += bank_interest
         stats["bank_interest_earned"] += bank_interest
 
+    profile["loans"] = normalize_loans(profile.get("loans", []))
     loan_interest = []
-    for idx, tier in enumerate(LOAN_TIERS):
-        balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
+    for loan in profile["loans"]:
+        balance = safe_int(loan.get("balance", 0), 0)
         if balance <= 0:
             loan_interest.append(0)
             continue
-        interest = max(1, int(round(balance * tier["daily_rate"])))
-        profile["loans"][idx]["balance"] += interest
+        interest = max(1, int(round(balance * safe_float(loan.get("daily_rate", 0.0), 0.0))))
+        loan["balance"] += interest
         stats["loan_interest_paid"] += interest
         loan_interest.append(interest)
+    profile["loans"] = normalize_loans(profile.get("loans", []))
 
     profile["bank_days_elapsed"] += 1
     summary = [f"第 {profile['bank_days_elapsed']} 天结息"]
     if bank_interest:
-        summary.append(f"存款 +${bank_interest}")
+        summary.append(f"存款 +{fmt_money(bank_interest)}")
     debt_interest = sum(loan_interest)
     if debt_interest:
-        summary.append(f"贷款利息 -${debt_interest}")
+        summary.append(f"贷款利息 -{fmt_money(debt_interest)}")
     if len(summary) > 1:
         messages.append(colored("  [银行结息] " + " / ".join(summary), C.YELLOW))
     messages.extend(apply_asset_market_day(chips, stats, profile))
@@ -1039,6 +1139,12 @@ def can_claim_government_aid(chips, profile):
 
 def refresh_career_status(chips, stats, profile):
     update_career_high(chips, profile)
+    if honor_progress(profile) >= HONOR_TARGET:
+        if not profile.get("retired"):
+            profile["retired"] = True
+            profile["retired_at"] = now_str()
+            profile["retire_reason"] = "你已攒够 10^14 荣誉点，正式通关 Leo's Casino。"
+        return True
     if total_assets(chips, profile) <= 0 and profile.get("government_aid_used", 0) >= MAX_GOVERNMENT_AID:
         if not profile.get("retired"):
             profile["retired"] = True
@@ -1184,6 +1290,7 @@ def state_snapshot(chips, profile):
         "market_value": int(market_value(profile)),
         "debt": int(total_debt(profile)),
         "net_assets": int(total_assets(chips, profile)),
+        "honor_points": int(honor_progress(profile)),
         "bank_ratio": float(profile.get("bank_ratio", 0.5)),
         "operation_cycle_progress": int(operation_progress(profile)),
         "bank_days_elapsed": int(profile.get("bank_days_elapsed", 0)),
@@ -1309,6 +1416,7 @@ def build_export_payload(slot, chips, stats, profile):
             "market_value": market_value(profile),
             "debt": total_debt(profile),
             "net_assets": total_assets(chips, profile),
+            "honor_points": honor_progress(profile),
             "bank_ratio": profile.get("bank_ratio", 0.5),
             "bank_days_elapsed": profile.get("bank_days_elapsed", 0),
             "operations_total": stats.get("operations_count", 0),
@@ -1318,6 +1426,7 @@ def build_export_payload(slot, chips, stats, profile):
             "loan_interest_paid": stats.get("loan_interest_paid", 0),
             "asset_realized_profit": stats.get("asset_realized_profit", 0),
             "asset_passive_income": stats.get("asset_passive_income", 0),
+            "honor_cash_spent": stats.get("honor_cash_spent", 0),
             "location": profile.get("location", "home"),
         },
         "stats": stats,
@@ -1383,10 +1492,14 @@ def show_career_summary(chips, stats, profile, slot, wait=True):
         f"累计付息:     {colored(fmt_money(stats.get('loan_interest_paid', 0)), C.RED)}",
         f"交易已实现:   {colored(fmt_money(stats.get('asset_realized_profit', 0)), C.GREEN if stats.get('asset_realized_profit', 0) >= 0 else C.RED)}",
         f"经营被动收:   {colored(fmt_money(stats.get('asset_passive_income', 0)), C.CYAN)}",
+        "",
+        f"荣誉点:       {colored(fmt_int(honor_progress(profile)), C.YELLOW)} / {fmt_int(HONOR_TARGET)}",
+        f"通关进度:     {colored(f'{honor_progress_pct(profile):.6f}%', C.CYAN)}",
+        f"进度条:       {progress_bar(honor_progress(profile), HONOR_TARGET, width=24)}",
     ]
     if profile.get("retire_reason"):
         lines.extend(["", colored(profile["retire_reason"], C.RED)])
-    print(box(lines, width=50, title="生涯总结", color=C.RED if profile.get("retired") else C.MAGENTA))
+    print(box(lines, width=ui_width(50, 70), title="生涯总结", color=C.RED if profile.get("retired") else C.MAGENTA))
     if wait:
         pause()
 
@@ -1568,6 +1681,31 @@ def fmt_delta_suffix(value, show_zero=False):
     color = C.GREEN if delta > 0 else (C.RED if delta < 0 else C.DIM)
     sign = "+" if delta >= 0 else "-"
     return " " + colored(f"({sign}{abs(delta):,})", color)
+
+
+def honor_progress(profile):
+    return max(0, safe_int(profile.get("honor_points", 0), 0))
+
+
+def honor_progress_pct(profile):
+    return min(100.0, honor_progress(profile) / HONOR_TARGET * 100)
+
+
+def progress_bar(current, total, width=24):
+    total = max(1, safe_int(total, 1))
+    current = max(0, safe_int(current, 0))
+    filled = min(width, int(current / total * width))
+    return colored("█" * filled, C.GREEN) + colored("░" * max(0, width - filled), C.DIM)
+
+
+def ui_expand_enabled():
+    return bool(get_global_setting("expand", 0))
+
+
+def ui_width(compact, expanded=None):
+    if expanded is None:
+        expanded = compact + 16
+    return expanded if ui_expand_enabled() else compact
 
 def clear():
     os.system("cls" if os.name == "nt" else "clear")
@@ -1807,7 +1945,8 @@ def pawnshop_trade_help_lines():
         "V1    进入 1 号资产详情",
         "V 6   进入 6 号资产详情",
         "BUY/SELL 命令请在单标的页使用",
-        "S     静态跳天",
+        "S/.   静态跳天",
+        "EXPAND 可切宽屏布局",
         "主页主要负责看盘和选标的",
     ]
 
@@ -1860,11 +1999,52 @@ def parse_single_asset_command(choice):
         return {"action": "exit", "shares": 0}
     if not tokens and not compact:
         return None
-    if compact and compact[0] in {"B", "S"} and compact[1:].isdigit():
-        return {"action": "buy" if compact[0] == "B" else "sell", "shares": int(compact[1:])}
-    if tokens and tokens[0] in {"BUY", "B", "SELL", "S"} and len(tokens) >= 2 and tokens[1].isdigit():
-        return {"action": "buy" if tokens[0] in {"BUY", "B"} else "sell", "shares": int(tokens[1])}
+
+    def parse_quantity(raw):
+        raw = (raw or "").strip().upper()
+        if raw in {"A", "ALL"}:
+            return {"mode": "all"}
+        if raw.isdigit():
+            return {"mode": "shares", "value": int(raw)}
+        try:
+            ratio = float(raw)
+        except ValueError:
+            return None
+        if 0 < ratio <= 1:
+            return {"mode": "ratio", "value": ratio}
+        return None
+
+    if compact and compact[0] in {"B", "S"} and len(compact) > 1:
+        quantity = parse_quantity(compact[1:])
+        if quantity:
+            quantity["action"] = "buy" if compact[0] == "B" else "sell"
+            return quantity
+    if tokens and tokens[0] in {"BUY", "B", "SELL", "S"} and len(tokens) >= 2:
+        quantity = parse_quantity(tokens[1])
+        if quantity:
+            quantity["action"] = "buy" if tokens[0] in {"BUY", "B"} else "sell"
+            return quantity
     return None
+
+
+def resolve_single_asset_shares(chips, profile, asset, command):
+    action = command.get("action")
+    mode = command.get("mode", "shares")
+    info = asset_position_summary(profile, asset)
+    if action == "buy":
+        limit = max_asset_buy_shares(chips, profile, asset)
+    else:
+        limit = info["shares"]
+    if limit <= 0:
+        return 0
+    if mode == "all":
+        return limit
+    if mode == "ratio":
+        ratio = safe_float(command.get("value", 0.0), 0.0)
+        if ratio <= 0:
+            return 0
+        return max(1, int(limit * ratio))
+    return max(0, safe_int(command.get("value", 0), 0))
 
 
 def asset_by_index(asset_index):
@@ -1980,7 +2160,7 @@ def location_hint_lines(current):
     if current == "pawnshop":
         parts.extend([
             colored("STAT统计", C.YELLOW),
-            colored("S跳天", C.BLUE),
+            colored("S/.跳天", C.BLUE),
         ])
     else:
         parts.extend([
@@ -2043,12 +2223,17 @@ def header(chips, slot=None, stats=None, profile=None):
             f"  净资产: {colored(fmt_money(assets), C.GREEN if assets > 0 else C.RED)}"
             f"  结息: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)}步后"
         )
+        if ui_expand_enabled():
+            lines.append(
+                f"  荣誉: {colored(fmt_int(honor_progress(profile)), C.YELLOW)}"
+                f"  进度: {colored(f'{honor_progress_pct(profile):.6f}%', C.CYAN)}"
+            )
     if slot is not None:
         slot_info = f"  存档: 槽位 {slot}"
         if stats:
             slot_info += f"  W{stats.get('wins',0)}/L{stats.get('losses',0)}"
         lines.append(colored(slot_info, C.DIM))
-    print(box(lines, width=72, color=C.YELLOW))
+    print(box(lines, width=ui_width(72, 96), color=C.YELLOW))
 
 
 def global_command_result(choice, chips, slot, stats, profile):
@@ -2076,9 +2261,11 @@ def global_command_result(choice, chips, slot, stats, profile):
     if choice in {'STAT', 'STATS'}:
         show_stats(chips, stats, profile)
         return chips, None
-    if choice == 'S':
+    if choice in {'S', '.'}:
         if profile.get("location", "home") == "pawnshop":
             chips = skip_to_next_day(chips, slot, stats, profile, silent=True)
+        elif choice == '.':
+            return chips, "__local__"
         else:
             show_stats(chips, stats, profile)
         return chips, None
@@ -2114,12 +2301,27 @@ def max_bank_withdrawal(chips, profile):
 
 
 def loan_lines(chips, profile):
-    cap = loan_tier_cap(chips, profile)
+    vip_level = current_vip_level(chips, profile)
+    total_cap = current_vip_total_cap(chips, profile)
+    unit = current_vip_unit(chips, profile)
     lines = []
-    for idx, tier in enumerate(LOAN_TIERS):
-        balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
-        status = f"{fmt_money(balance)}/{fmt_money(cap)}" if cap > 0 else f"{fmt_money(balance)}/锁定"
-        lines.append(f"{tier['name']}: {colored(status, C.RED if balance > 0 else C.DIM)}  日息 {tier['daily_rate'] * 100:.2f}%")
+    if vip_level <= 0:
+        lines.append(f"当前等级: {colored('未达 VIP1', C.DIM)}")
+        lines.append(f"门槛要求: {colored(fmt_money(LOAN_VIP_MIN_ASSETS), C.YELLOW)} 净资产")
+        lines.append("小客户暂时别碰贷款，先把资产做大。")
+        return lines
+    lines.append(f"当前等级: {colored(f'VIP{vip_level}', C.YELLOW)}  日息 {vip_daily_rate(vip_level) * 100:.2f}%")
+    lines.append(f"借款单位: {colored(fmt_money(unit), C.CYAN)}")
+    lines.append(f"总额度顶格: {colored(fmt_money(total_cap), C.GREEN)}")
+    lines.append(f"当前负债: {colored(fmt_money(total_debt(profile)), C.RED if total_debt(profile) > 0 else C.DIM)}")
+    lines.append("")
+    for loan in active_loans(profile)[:5]:
+        lines.append(
+            f"{loan_label(loan)} {colored(fmt_money(loan.get('balance', 0)), C.RED)}"
+            f"  @{safe_float(loan.get('daily_rate', 0.0), 0.0) * 100:.2f}%"
+        )
+    if not active_loans(profile):
+        lines.append(colored("当前没有未还贷款。", C.DIM))
     return lines
 
 
@@ -2134,14 +2336,18 @@ def bank_menu(chips, slot, stats, profile):
         max_withdraw = max_bank_withdrawal(chips, profile)
         next_borrow = max_loan_borrow_amount(chips, profile)
         min_borrow = min_loan_borrow_amount(chips, profile)
+        vip_level = current_vip_level(chips, profile)
+        vip_label = f"VIP{vip_level}" if vip_level > 0 else "未达 VIP1"
         overview_lines = [
             f"现金:       {colored(fmt_money(chips), C.GREEN if chips > 0 else C.RED)}",
             f"银行余额:   {colored(fmt_money(profile.get('bank', 0)), C.CYAN)}",
             f"贷款负债:   {colored(fmt_money(debt), C.RED if debt > 0 else C.DIM)}",
             f"净资产:     {colored(fmt_money(assets), C.YELLOW if assets > 0 else C.RED)}",
+            f"贷款等级:   {colored(vip_label, C.MAGENTA if vip_level > 0 else C.DIM)}",
             f"安全比率:   {colored(f'{ratio:.2f}', C.MAGENTA)}",
             f"本次最多取: {colored(fmt_money(max_withdraw), C.WHITE)}",
             f"总可借额:   {colored(fmt_money(next_borrow), C.GREEN if next_borrow > 0 else C.DIM)}",
+            f"荣誉点:     {colored(fmt_int(honor_progress(profile)), C.YELLOW)}",
             f"结息倒计时: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)} 操作",
         ]
         action_lines = [
@@ -2151,27 +2357,29 @@ def bank_menu(chips, slot, stats, profile):
             colored("4", C.GREEN) + "  借款",
             colored("5", C.GREEN) + "  还款",
             (colored("6", C.GREEN) + "  一键补缺") if shortfall > 0 and profile.get("bank", 0) > 0 else (colored("6", C.DIM) + "  一键补缺"),
+            (colored("7", C.GREEN) + "  兑换荣誉点") if chips + profile.get("bank", 0) >= HONOR_POINT_COST else (colored("7", C.DIM) + "  兑换荣誉点"),
         ]
         print(colored("\n  ── 银行 ──\n", C.CYAN))
-        left_panel = box(overview_lines, width=34, title="资产总览", color=C.CYAN)
-        right_panel = box(loan_lines(chips, profile), width=42, title="贷款分档", color=C.MAGENTA)
+        left_panel = box(overview_lines, width=ui_width(34, 42), title="资产总览", color=C.CYAN)
+        right_panel = box(loan_lines(chips, profile), width=ui_width(42, 50), title="VIP贷款", color=C.MAGENTA)
         print(render_box_columns([left_panel, right_panel]))
         print()
         print(render_box_columns([
-            box(action_lines, width=34, title="银行操作", color=C.WHITE),
+            box(action_lines, width=ui_width(34, 42), title="银行操作", color=C.WHITE),
             box([
                 "取钱后，现金不能超过 净资产 x 安全比率",
-                "借款按一档→二档→三档开放，可一次跨档补满。",
+                "贷款按 VIP 发放，旧债保留借入时的利率。",
+                f"VIP1 从 {fmt_money(LOAN_VIP_MIN_ASSETS)} 净资产开始，顶到 VIP9。",
                 f"每 {DAILY_OPERATION_COUNT} 次操作自动结算一天利息。",
-                "现金为负时，可用一键补缺自动回填。",
+                f"荣誉点兑换比例: {fmt_money(HONOR_POINT_COST)} = 1 点荣誉。",
                 "",
                 colored("提示", C.YELLOW) + "  利率越高越危险，优先还高档贷款。",
-            ], width=42, title="规则说明", color=C.WHITE)
+            ], width=ui_width(42, 50), title="规则说明", color=C.WHITE)
         ]))
         print()
-        print(box(location_hint_lines("bank"), width=72, title="全局快捷", color=C.CYAN))
+        print(box(location_hint_lines("bank"), width=ui_width(72, 96), title="全局快捷", color=C.CYAN))
         if shortfall > 0:
-            print(colored(f"  当前现金欠款 ${shortfall}，在补齐前不能参加任何赌桌。", C.RED))
+            print(colored(f"  当前现金欠款 {fmt_money(shortfall)}，在补齐前不能参加任何赌桌。", C.RED))
 
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         chips, global_result = global_command_result(choice, chips, slot, stats, profile)
@@ -2213,7 +2421,7 @@ def bank_menu(chips, slot, stats, profile):
                 operation_delta=1,
             )
             auto_save(slot, chips, stats, profile)
-            print(colored(f"  已存入 ${amount}。", C.GREEN))
+            print(colored(f"  已存入 {fmt_money(amount)}。", C.GREEN))
             for notice in notices:
                 print(notice)
             pause()
@@ -2253,7 +2461,7 @@ def bank_menu(chips, slot, stats, profile):
                 operation_delta=1,
             )
             auto_save(slot, chips, stats, profile)
-            print(colored(f"  已取出 ${amount}。", C.GREEN))
+            print(colored(f"  已取出 {fmt_money(amount)}。", C.GREEN))
             for notice in notices:
                 print(notice)
             pause()
@@ -2287,17 +2495,14 @@ def bank_menu(chips, slot, stats, profile):
                 print(notice)
             pause()
         elif choice == '4':
-            borrow_plan = loan_borrow_plan(chips, profile)
-            if not borrow_plan or next_borrow <= 0:
+            if vip_level <= 0 or next_borrow <= 0 or min_borrow <= 0:
                 print(colored("  当前没有可借额度。", C.RED))
                 pause()
                 continue
-            plan_hint = " / ".join(
-                f"{item['tier_name']} ${item['amount']} @ {item['daily_rate'] * 100:.2f}%"
-                for item in borrow_plan
-            )
-            print(colored(f"  最少借款 ${min_borrow}，本次最多可直接借 ${next_borrow}。", C.DIM))
-            print(colored(f"  将按顺序自动分配: {plan_hint}", C.DIM))
+            unit = current_vip_unit(chips, profile)
+            rate = vip_daily_rate(vip_level)
+            print(colored(f"  当前等级 {vip_label}，借款单位 {fmt_money(unit)}，日息 {rate * 100:.2f}%。", C.DIM))
+            print(colored(f"  本次最少借 {fmt_money(min_borrow)}，最多可借 {fmt_money(next_borrow)}。", C.DIM))
             print(f"  输入借款金额 ({min_borrow}-{next_borrow})，或输入 0 取消:")
             try:
                 amount = int(input(colored("  > ", C.YELLOW)))
@@ -2305,19 +2510,27 @@ def bank_menu(chips, slot, stats, profile):
                 continue
             if amount == 0:
                 continue
-            if amount < min_borrow or amount > next_borrow:
-                print(colored("  超出当前总可借范围。", C.RED))
-                pause()
-                continue
-            chosen_plan = loan_borrow_plan(chips, profile, amount)
-            borrowed = sum(item["amount"] for item in chosen_plan)
-            if borrowed != amount:
-                print(colored("  当前贷款分档不足以完成这次借款。", C.RED))
+            if amount < min_borrow or amount > next_borrow or amount % unit != 0:
+                print(colored(f"  金额必须在范围内，并按 {fmt_money(unit)} 为步长。", C.RED))
                 pause()
                 continue
             before = state_snapshot(chips, profile)
-            for item in chosen_plan:
-                profile["loans"][item["tier_index"]]["balance"] += item["amount"]
+            profile["loans"] = normalize_loans(profile.get("loans", []))
+            existing = None
+            for loan in profile["loans"]:
+                if safe_int(loan.get("vip_level", 0), 0) == vip_level and abs(safe_float(loan.get("daily_rate", 0.0), 0.0) - rate) < 1e-9:
+                    existing = loan
+                    break
+            if existing is None:
+                existing = {
+                    "balance": 0,
+                    "vip_level": vip_level,
+                    "daily_rate": rate,
+                    "label": vip_label,
+                }
+                profile["loans"].append(existing)
+            existing["balance"] += amount
+            profile["loans"] = normalize_loans(profile.get("loans", []))
             chips += amount
             stats["loan_borrowed_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
@@ -2328,24 +2541,17 @@ def bank_menu(chips, slot, stats, profile):
                 "borrow",
                 details={
                     "amount": amount,
-                    "allocations": [
-                        {
-                            "tier_index": item["tier_index"],
-                            "tier_name": item["tier_name"],
-                            "daily_rate": item["daily_rate"],
-                            "amount": item["amount"],
-                        }
-                        for item in chosen_plan
-                    ],
+                    "vip_level": vip_level,
+                    "vip_label": vip_label,
+                    "daily_rate": rate,
+                    "unit": unit,
                 },
                 before=before,
                 after=state_snapshot(chips, profile),
                 operation_delta=1,
             )
             auto_save(slot, chips, stats, profile)
-            allocation_text = "，".join(f"{item['tier_name']} ${item['amount']}" for item in chosen_plan)
-            print(colored(f"  已借入 ${amount}。", C.GREEN))
-            print(colored(f"  分配: {allocation_text}", C.DIM))
+            print(colored(f"  已从 {vip_label} 借入 {fmt_money(amount)}。", C.GREEN))
             for notice in notices:
                 print(notice)
             pause()
@@ -2373,15 +2579,20 @@ def bank_menu(chips, slot, stats, profile):
             before = state_snapshot(chips, profile)
             chips -= amount
             remaining = amount
-            for idx in range(len(LOAN_TIERS) - 1, -1, -1):
-                balance = safe_int(profile["loans"][idx].get("balance", 0), 0)
+            paid_breakdown = []
+            profile["loans"] = normalize_loans(profile.get("loans", []))
+            for loan in profile["loans"]:
+                balance = safe_int(loan.get("balance", 0), 0)
                 if balance <= 0:
                     continue
                 paid = min(balance, remaining)
-                profile["loans"][idx]["balance"] -= paid
+                loan["balance"] -= paid
+                if paid > 0:
+                    paid_breakdown.append({"label": loan_label(loan), "amount": paid})
                 remaining -= paid
                 if remaining <= 0:
                     break
+            profile["loans"] = normalize_loans(profile.get("loans", []))
             stats["loan_repaid_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
             append_history(
@@ -2389,13 +2600,15 @@ def bank_menu(chips, slot, stats, profile):
                 profile,
                 "bank",
                 "repay",
-                details={"amount": amount},
+                details={"amount": amount, "breakdown": paid_breakdown},
                 before=before,
                 after=state_snapshot(chips, profile),
                 operation_delta=1,
             )
             auto_save(slot, chips, stats, profile)
-            print(colored(f"  已还款 ${amount}。", C.GREEN))
+            print(colored(f"  已还款 {fmt_money(amount)}。", C.GREEN))
+            if paid_breakdown:
+                print(colored("  顺序: " + "，".join(f"{item['label']} {fmt_money(item['amount'])}" for item in paid_breakdown), C.DIM))
             for notice in notices:
                 print(notice)
             pause()
@@ -2430,9 +2643,57 @@ def bank_menu(chips, slot, stats, profile):
             )
             auto_save(slot, chips, stats, profile)
             if debt_shortfall(chips) == 0:
-                print(colored(f"  已用银行资金补齐 ${amount}，现金恢复为 ${chips}。", C.GREEN))
+                print(colored(f"  已用银行资金补齐 {fmt_money(amount)}，现金恢复为 {fmt_money(chips)}。", C.GREEN))
             else:
-                print(colored(f"  已补上 ${amount}，但现金仍欠 ${debt_shortfall(chips)}。", C.YELLOW))
+                print(colored(f"  已补上 {fmt_money(amount)}，但现金仍欠 {fmt_money(debt_shortfall(chips))}。", C.YELLOW))
+            for notice in notices:
+                print(notice)
+            pause()
+        elif choice == '7':
+            liquid_total = max(0, chips + profile.get("bank", 0))
+            max_points = liquid_total // HONOR_POINT_COST
+            if max_points <= 0:
+                print(colored("  当前可动用现金不足以兑换荣誉点。", C.RED))
+                pause()
+                continue
+            print(colored(f"  每 {fmt_money(HONOR_POINT_COST)} 可兑换 1 点荣誉。", C.DIM))
+            print(colored(f"  你最多可兑换 {fmt_int(max_points)} 点；也可以输入 MAX。", C.DIM))
+            raw = input(colored("  > ", C.YELLOW)).strip().upper()
+            if raw in {"", "0"}:
+                continue
+            if raw == "MAX":
+                points = max_points
+            else:
+                try:
+                    points = int(raw)
+                except (ValueError, EOFError):
+                    continue
+            if points <= 0 or points > max_points:
+                print(colored("  荣誉点数量无效。", C.RED))
+                pause()
+                continue
+            before = state_snapshot(chips, profile)
+            cost = points * HONOR_POINT_COST
+            cash_used = min(max(0, chips), cost)
+            bank_used = cost - cash_used
+            chips -= cash_used
+            profile["bank"] -= bank_used
+            profile["honor_points"] = honor_progress(profile) + points
+            stats["honor_points_earned"] += points
+            stats["honor_cash_spent"] += cost
+            notices = record_operations(chips, stats, profile, 1)
+            append_history(
+                stats,
+                profile,
+                "bank",
+                "honor_exchange",
+                details={"points": points, "cost": cost, "cash_used": cash_used, "bank_used": bank_used},
+                before=before,
+                after=state_snapshot(chips, profile),
+                operation_delta=1,
+            )
+            auto_save(slot, chips, stats, profile)
+            print(colored(f"  已兑换 {fmt_int(points)} 点荣誉，花费 {fmt_money(cost)}。", C.GREEN))
             for notice in notices:
                 print(notice)
             pause()
@@ -2466,8 +2727,8 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             f"图表模式:   {colored('展开 30 天' if expanded else '默认 8 天', C.MAGENTA)}",
             asset["desc"],
         ]
-        detail_width = 34
-        chart_width = 58 if expanded else 31
+        detail_width = ui_width(34, 42)
+        chart_width = 68 if expanded else ui_width(31, 40)
         chart_title = "近 30 天柱状图" if expanded else "近 8 天走势"
         chart_lines = asset_expanded_chart_lines(profile, asset, height=len(detail_lines)) if expanded else asset_chart_lines(profile, asset)
         clear()
@@ -2478,6 +2739,9 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             "S 2   卖出 2 份",
             "B3    买入 3 份",
             "S2    卖出 2 份",
+            "BA/SA 买满/卖光",
+            "B0.5  买 50% 仓位",
+            "S0.5  卖 50% 持仓",
             "EXPAND 切换走势图",
             "P TRIG EXPAND",
             "P SET EXPAND=0/1",
@@ -2489,19 +2753,20 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
         ], gap=3))
         print()
         print(render_box_columns([
-            box(cmd_lines, width=30, title="交易命令", color=C.GREEN),
-            box(asset_specific_news_lines(profile, asset), width=35, title="消息面", color=C.YELLOW if effect["items"] else C.WHITE),
+            box(cmd_lines, width=ui_width(30, 36), title="交易命令", color=C.GREEN),
+            box(asset_specific_news_lines(profile, asset), width=ui_width(35, 46), title="消息面", color=C.YELLOW if effect["items"] else C.WHITE),
         ], gap=2))
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         command = parse_single_asset_command(choice)
         if command:
             if command["action"] == "exit":
                 return chips
+            shares = resolve_single_asset_shares(chips, profile, asset, command)
             if command["action"] == "buy":
-                chips = execute_asset_buy(chips, slot, stats, profile, asset, command["shares"])
+                chips = execute_asset_buy(chips, slot, stats, profile, asset, shares)
                 continue
             if command["action"] == "sell":
-                chips = execute_asset_sell(chips, slot, stats, profile, asset, command["shares"])
+                chips = execute_asset_sell(chips, slot, stats, profile, asset, shares)
                 continue
         chips, global_result = global_command_result(choice, chips, slot, stats, profile)
         if global_result == "__exit__":
@@ -2519,29 +2784,31 @@ def pawnshop_menu(chips, slot, stats, profile):
         clear()
         header(chips, slot, stats, profile)
         print(colored("\n  ── 典当行 ──\n", C.MAGENTA))
+        asset_box_width = ui_width(22, 28)
+        per_row = 3 if not ui_expand_enabled() else 4
         asset_boxes = [
             box(
                 pawnshop_asset_box_lines(chips, profile, asset, idx),
-                width=22,
+                width=asset_box_width,
                 title=str(idx),
                 color=C.CYAN if asset["tag"] == "稳健" else (C.YELLOW if asset["tag"] == "经营" else C.MAGENTA),
             )
             for idx, asset in enumerate(ASSET_MARKETS, start=1)
         ]
-        for start in range(0, len(asset_boxes), 3):
-            print(render_box_columns(asset_boxes[start:start + 3], gap=2))
+        for start in range(0, len(asset_boxes), per_row):
+            print(render_box_columns(asset_boxes[start:start + per_row], gap=2))
             print()
         print(render_box_columns([
-            box(pawnshop_portfolio_lines(chips, profile), width=34, title="投资组合", color=C.CYAN),
-            box(pawnshop_driver_lines(profile), width=36, title="价格驱动", color=C.YELLOW),
+            box(pawnshop_portfolio_lines(chips, profile), width=ui_width(34, 42), title="投资组合", color=C.CYAN),
+            box(pawnshop_driver_lines(profile), width=ui_width(36, 50), title="价格驱动", color=C.YELLOW),
         ], gap=2))
         print()
         print(render_box_columns([
-            box(pawnshop_trade_help_lines(), width=34, title="交易命令", color=C.GREEN),
-            box(pawnshop_news_lines(profile), width=36, title="消息面", color=C.MAGENTA),
+            box(pawnshop_trade_help_lines(), width=ui_width(34, 42), title="交易命令", color=C.GREEN),
+            box(pawnshop_news_lines(profile), width=ui_width(36, 50), title="消息面", color=C.MAGENTA),
         ], gap=2))
         print()
-        print(box(location_hint_lines("pawnshop"), width=72, title="全局快捷", color=C.CYAN))
+        print(box(location_hint_lines("pawnshop"), width=ui_width(72, 96), title="全局快捷", color=C.CYAN))
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         trade = parse_pawnshop_trade_command(choice)
         if trade:
@@ -2598,7 +2865,7 @@ def claim_government_aid(chips, slot, stats, profile):
         operation_delta=1,
     )
     auto_save(slot, chips, stats, profile)
-    print(colored(f"  政府补贴到账 ${GOVERNMENT_AID_AMOUNT}。第 {profile['government_aid_used']}/{MAX_GOVERNMENT_AID} 次。", C.GREEN))
+    print(colored(f"  政府补贴到账 {fmt_money(GOVERNMENT_AID_AMOUNT)}。第 {profile['government_aid_used']}/{MAX_GOVERNMENT_AID} 次。", C.GREEN))
     for notice in notices:
         print(notice)
     pause()
@@ -4386,20 +4653,21 @@ def home_menu(chips, slot, stats, profile):
             f"净资产:     {colored(fmt_money(total_assets(chips, profile)), C.GREEN if total_assets(chips, profile) > 0 else C.RED)}",
             f"现金缺口:   {colored(fmt_money(cash_shortfall), C.RED if cash_shortfall > 0 else C.DIM)}",
             f"今日地点:   {colored(location_label('home'), C.MAGENTA)}",
-        ], width=34, title="家里", color=C.CYAN)
+        ], width=ui_width(34, 42), title="家里", color=C.CYAN)
         right = box([
             colored("1", C.GREEN) + "  去赌场",
             colored("2", C.GREEN) + "  去银行",
             colored("3", C.GREEN) + "  去典当行",
+            colored("4", C.GREEN) + "  看荣誉进度",
             "",
             "你从家里出发，决定今天先去哪里。",
             "赌场适合搏一把，银行适合整理现金流，",
             "典当行适合做长期仓位和卖仓救急。",
-        ], width=46, title="出门计划", color=C.GREEN)
+        ], width=ui_width(46, 52), title="出门计划", color=C.GREEN)
         print()
         print(render_box_columns([left, right], gap=3))
         print()
-        print(box(location_hint_lines("home"), width=72, title="全局快捷", color=C.CYAN))
+        print(box(location_hint_lines("home"), width=ui_width(72, 96), title="全局快捷", color=C.CYAN))
         if cash_shortfall > 0:
             print(colored(f"  现金当前为负 {fmt_money(cash_shortfall)}。你不能上赌桌，但还能去银行或典当行处理仓位。", C.RED))
         elif can_claim_government_aid(chips, profile):
@@ -4421,6 +4689,9 @@ def home_menu(chips, slot, stats, profile):
         if choice == '3':
             travel_to(chips, slot, stats, profile, "pawnshop")
             return chips, "pawnshop"
+        if choice == '4':
+            show_stats(chips, stats, profile)
+            continue
         print(colored("  无效输入。", C.RED))
         pause()
 
@@ -4438,15 +4709,15 @@ def casino_menu(chips, slot, stats, profile):
         ]
         print(colored("\n  ── 赌场 ──\n", C.CYAN))
         print(render_box_columns([
-            box(menu, width=34, title="赌桌列表", color=C.CYAN),
+            box(menu, width=ui_width(34, 42), title="赌桌列表", color=C.CYAN),
             box([
                 "这里还是那个最危险也最刺激的地方。",
                 "短线现金流靠赌桌，长期资金线可以去典当行。",
                 "地下跑单每天只能做一次，火烧洋油站仍然是长线 Boss 桌。",
-            ], width=42, title="街区情报", color=C.YELLOW),
+            ], width=ui_width(42, 50), title="街区情报", color=C.YELLOW),
         ], gap=2))
         print()
-        print(box(location_hint_lines("casino"), width=72, title="全局快捷", color=C.CYAN))
+        print(box(location_hint_lines("casino"), width=ui_width(72, 96), title="全局快捷", color=C.CYAN))
 
         cash_shortfall = debt_shortfall(chips)
         if chips <= 0 and profile.get("bank", 0) > 0:
@@ -4554,6 +4825,7 @@ def show_stats(chips, stats, profile):
     assets = total_assets(chips, profile)
     debt = total_debt(profile)
     holdings = market_value(profile)
+    compact = not ui_expand_enabled()
     overview_box = box([
         f"总局数:   {colored(str(total_games), C.WHITE)}",
         f"胜负平:   {colored(str(stats.get('wins', 0)), C.GREEN)}/{colored(str(stats.get('losses', 0)), C.RED)}/{colored(str(stats.get('pushes', 0)), C.BLUE)}",
@@ -4561,8 +4833,8 @@ def show_stats(chips, stats, profile):
         f"总下注:   {colored(fmt_money(stats.get('total_bet', 0)), C.CYAN)}",
         f"最大单赢: {colored(fmt_money(stats.get('biggest_win', 0)), C.GREEN)}",
         f"历史条目: {colored(str(len(profile.get('history', []))), C.WHITE)}",
-    ], width=34, title="总览", color=C.CYAN)
-    fire_box = box(game_panel_lines(stats, "fire_station", "火烧洋油站", "Boss"), width=34, title="火烧洋油站", color=C.RED)
+    ], width=ui_width(34, 42), title="总览", color=C.CYAN)
+    fire_box = box(game_panel_lines(stats, "fire_station", "火烧洋油站", "Boss"), width=ui_width(34, 42), title="火烧洋油站", color=C.RED)
     bank_box = box([
         f"现金:     {colored(fmt_money(chips), C.GREEN if chips > 0 else C.RED)}",
         f"存款:     {colored(fmt_money(profile.get('bank', 0)), C.CYAN)}",
@@ -4578,7 +4850,7 @@ def show_stats(chips, stats, profile):
         f"借还款:    {colored(fmt_money(stats.get('loan_borrowed_total', 0)), C.YELLOW)}/{colored(fmt_money(stats.get('loan_repaid_total', 0)), C.CYAN)}",
         f"补贴/天数: {colored(str(profile.get('government_aid_used', 0)), C.YELLOW)}/{colored(str(profile.get('bank_days_elapsed', 0)), C.WHITE)}",
         f"操作/导出: {colored(str(stats.get('operations_count', 0)), C.WHITE)}/{colored(str(profile.get('export_count', 0)), C.WHITE)}",
-    ], width=38, title="银行与资产", color=C.YELLOW)
+    ], width=ui_width(38, 46), title="银行与资产", color=C.YELLOW)
     asset_box_lines = [
         f"交易次数: {colored(str(stats.get('asset_trade_count', 0)), C.WHITE)}",
         f"买入/卖出: {colored(fmt_money(stats.get('asset_buy_total', 0)), C.YELLOW)}/{colored(fmt_money(stats.get('asset_sell_total', 0)), C.CYAN)}",
@@ -4590,7 +4862,7 @@ def show_stats(chips, stats, profile):
     for asset in ASSET_MARKETS:
         info = asset_position_summary(profile, asset)
         asset_box_lines.append(f"{asset['name']}: {colored(fmt_int(info['shares']) + '份', C.WHITE)} / {colored(fmt_money(info['market_value']), C.MAGENTA if info['market_value'] > 0 else C.DIM)}")
-    asset_box = box(asset_box_lines, width=38, title="典当行与持仓", color=C.MAGENTA)
+    asset_box = box(asset_box_lines, width=ui_width(38, 50), title="典当行与持仓", color=C.MAGENTA)
     system_box = box([
         f"Blackjack: {colored(str(stats.get('blackjacks', 0)), C.YELLOW)}",
         f"Boss 击败: {colored(str(stats.get('bosses_defeated', 0)), C.MAGENTA)}",
@@ -4599,21 +4871,30 @@ def show_stats(chips, stats, profile):
         f"今日跑单: {colored('可接' if runner_available(profile) else '已用', C.CYAN if runner_available(profile) else C.DIM)}",
         f"结息进度: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)} 步",
         f"当前地点: {colored(location_label(profile.get('location', 'home')), C.MAGENTA)}",
-    ], width=34, title="系统与进度", color=C.GREEN)
+    ], width=ui_width(34, 42), title="系统与进度", color=C.GREEN)
+    honor_box = box([
+        f"当前荣誉: {colored(fmt_int(honor_progress(profile)), C.YELLOW)}",
+        f"目标荣誉: {colored(fmt_int(HONOR_TARGET), C.WHITE)}",
+        f"进度比例: {colored(f'{honor_progress_pct(profile):.6f}%', C.CYAN)}",
+        f"兑换总额: {colored(fmt_money(stats.get('honor_cash_spent', 0)), C.MAGENTA)}",
+        f"累计兑换: {colored(fmt_int(stats.get('honor_points_earned', 0)), C.GREEN)}",
+        "",
+        progress_bar(honor_progress(profile), HONOR_TARGET, width=28 if compact else 36),
+    ], width=ui_width(38, 50), title="荣誉系统", color=C.YELLOW)
     print(render_box_columns([overview_box, fire_box], gap=2))
     print()
     print(render_box_columns([bank_box, system_box], gap=2))
     print()
-    print(asset_box)
+    print(render_box_columns([asset_box, honor_box], gap=2) if not compact else render_box_columns([asset_box, honor_box], gap=2))
     print()
     print(render_box_columns([
-        box(game_panel_lines(stats, "blackjack", "Blackjack", "BJ"), width=34, title="Blackjack", color=C.CYAN),
-        box(game_panel_lines(stats, "craps", "Craps", "Point"), width=34, title="Craps", color=C.BLUE),
+        box(game_panel_lines(stats, "blackjack", "Blackjack", "BJ"), width=ui_width(34, 42), title="Blackjack", color=C.CYAN),
+        box(game_panel_lines(stats, "craps", "Craps", "Point"), width=ui_width(34, 42), title="Craps", color=C.BLUE),
     ], gap=2))
     print()
     print(render_box_columns([
-        box(game_panel_lines(stats, "slots", "Slots", "免旋"), width=34, title="Slots", color=C.MAGENTA),
-        box(game_panel_lines(stats, "runner", "跑单", "大成"), width=34, title="地下跑单", color=C.YELLOW),
+        box(game_panel_lines(stats, "slots", "Slots", "免旋"), width=ui_width(34, 42), title="Slots", color=C.MAGENTA),
+        box(game_panel_lines(stats, "runner", "跑单", "大成"), width=ui_width(34, 42), title="地下跑单", color=C.YELLOW),
     ], gap=2))
     pause()
 
