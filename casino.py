@@ -11,10 +11,11 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.2.0"
+GAME_VERSION = "v1.2.1"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
+GLOBAL_SETTINGS_PATH = os.path.join(SAVE_DIR, "preferences.json")
 MAX_SLOTS = 5
 INITIAL_CHIPS = 1000
 MAX_GOVERNMENT_AID = 3
@@ -23,12 +24,15 @@ MIN_BANK_RATIO = 0.0
 MAX_BANK_RATIO = 1.0
 DAILY_OPERATION_COUNT = 20
 MIN_LOAN_AMOUNT = 3000
+PAWNSHOP_COMPACT_HISTORY_DAYS = 8
+PAWNSHOP_EXPANDED_HISTORY_DAYS = 30
 BANK_DAILY_INTEREST = 0.0012
 LOAN_TIERS = [
     {"name": "一档", "daily_rate": 0.0035},
     {"name": "二档", "daily_rate": 0.0055},
     {"name": "三档", "daily_rate": 0.0080},
 ]
+GLOBAL_SETTINGS = None
 LOCATIONS = {
     "home": "家里",
     "casino": "赌场",
@@ -305,6 +309,12 @@ def default_pawnshop_state():
     }
 
 
+def default_global_settings():
+    return {
+        "expand": 0,
+    }
+
+
 def default_profile():
     return {
         "location": "home",
@@ -371,6 +381,14 @@ def normalize_loans(loans):
     return base
 
 
+def normalize_global_settings(settings):
+    base = default_global_settings()
+    if isinstance(settings, dict):
+        if "expand" in settings:
+            base["expand"] = 1 if safe_int(settings.get("expand", 0), 0) else 0
+    return base
+
+
 def asset_definitions():
     return ASSET_MARKETS
 
@@ -385,7 +403,7 @@ def normalize_asset_state(asset_id, asset_state):
     if isinstance(asset_state, dict):
         for key, value in asset_state.items():
             if key == "history" and isinstance(value, list):
-                cleaned = [max(1, safe_int(item, asset["base_price"])) for item in value[-8:]]
+                cleaned = [max(1, safe_int(item, asset["base_price"])) for item in value[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]]
                 base["history"] = cleaned or [asset["base_price"]]
             elif key in {"avg_cost", "short_avg_cost"}:
                 base[key] = max(0.0, safe_float(value, 0.0))
@@ -398,7 +416,7 @@ def normalize_asset_state(asset_id, asset_state):
     base["passive_income_total"] = max(0, safe_int(base.get("passive_income_total", 0), 0))
     base["short_shares"] = max(0, safe_int(base.get("short_shares", 0), 0))
     base["short_avg_cost"] = max(0.0, safe_float(base.get("short_avg_cost", 0.0), 0.0))
-    history = [max(asset["floor"], min(asset["ceiling"], safe_int(item, base["price"]))) for item in base.get("history", [])[-8:]]
+    history = [max(asset["floor"], min(asset["ceiling"], safe_int(item, base["price"]))) for item in base.get("history", [])[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]]
     if not history:
         history = [base["price"]]
     history[-1] = base["price"]
@@ -577,12 +595,39 @@ def next_loan_tier_index(chips, profile):
     return None
 
 
-def max_loan_borrow_amount(chips, profile):
-    tier_index = next_loan_tier_index(chips, profile)
-    if tier_index is None:
-        return 0
+def loan_borrow_plan(chips, profile, amount=None):
     cap = loan_tier_cap(chips, profile)
-    return max(0, cap - safe_int(profile["loans"][tier_index].get("balance", 0), 0))
+    if cap <= 0:
+        return []
+    loans = profile.get("loans", [])
+    remaining_amount = None if amount is None else max(0, safe_int(amount, 0))
+    allocations = []
+    previous_after = None
+    for idx, tier in enumerate(LOAN_TIERS):
+        balance = safe_int(loans[idx].get("balance", 0), 0)
+        if idx > 0 and previous_after is not None and previous_after < cap:
+            break
+        remaining_cap = max(0, cap - balance)
+        take = remaining_cap if remaining_amount is None else min(remaining_cap, remaining_amount)
+        if take > 0:
+            allocations.append({
+                "tier_index": idx,
+                "tier_name": tier["name"],
+                "daily_rate": tier["daily_rate"],
+                "amount": take,
+                "balance_before": balance,
+                "balance_after": balance + take,
+            })
+        previous_after = balance + take
+        if remaining_amount is not None:
+            remaining_amount -= take
+            if remaining_amount <= 0:
+                break
+    return allocations
+
+
+def max_loan_borrow_amount(chips, profile):
+    return sum(item["amount"] for item in loan_borrow_plan(chips, profile))
 
 
 def min_loan_borrow_amount(chips, profile):
@@ -786,7 +831,7 @@ def apply_asset_market_day(chips, stats, profile):
         state["price"] = new_price
         history = state.setdefault("history", [])
         history.append(new_price)
-        state["history"] = history[-8:]
+        state["history"] = history[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]
 
         move_abs = abs(new_price - old_price)
         if biggest_move is None or move_abs > biggest_move["move_abs"]:
@@ -953,6 +998,53 @@ def ensure_save_dir():
 
 def ensure_export_dir():
     os.makedirs(EXPORT_DIR, exist_ok=True)
+
+
+def load_global_settings():
+    ensure_save_dir()
+    if not os.path.exists(GLOBAL_SETTINGS_PATH):
+        return default_global_settings()
+    try:
+        with open(GLOBAL_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default_global_settings()
+    return normalize_global_settings(raw)
+
+
+def global_settings():
+    global GLOBAL_SETTINGS
+    if GLOBAL_SETTINGS is None:
+        GLOBAL_SETTINGS = load_global_settings()
+    return GLOBAL_SETTINGS
+
+
+def save_global_settings(settings=None):
+    ensure_save_dir()
+    normalized = normalize_global_settings(settings if settings is not None else global_settings())
+    with open(GLOBAL_SETTINGS_PATH, "w", encoding="utf-8") as f:
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+    global GLOBAL_SETTINGS
+    GLOBAL_SETTINGS = normalized
+    return normalized
+
+
+def get_global_setting(name, default=0):
+    return global_settings().get(name, default)
+
+
+def set_global_setting(name, value):
+    settings = global_settings()
+    settings[name] = value
+    return save_global_settings(settings)
+
+
+def toggle_global_setting(name):
+    current = 1 if safe_int(get_global_setting(name, 0), 0) else 0
+    updated = 0 if current else 1
+    set_global_setting(name, updated)
+    return updated
+
 
 def save_path(slot):
     return os.path.join(SAVE_DIR, f"slot_{slot}.json")
@@ -1485,7 +1577,7 @@ def total_unrealized_profit(profile):
 
 def asset_chart_lines(profile, asset):
     state = market_asset_state(profile, asset["id"])
-    history = state.get("history", [state.get("price", asset["base_price"])])[-8:]
+    history = state.get("history", [state.get("price", asset["base_price"])])[-PAWNSHOP_COMPACT_HISTORY_DAYS:]
     if not history:
         history = [asset["base_price"]]
     low = min(history)
@@ -1501,6 +1593,38 @@ def asset_chart_lines(profile, asset):
             color = C.GREEN if price >= prev else C.RED
         lines.append(f"D{idx:02d} {str(price).rjust(4)} {colored('█' * bar_len, color)}")
     return lines
+
+
+def asset_expanded_chart_lines(profile, asset, height=12):
+    state = market_asset_state(profile, asset["id"])
+    history = state.get("history", [state.get("price", asset["base_price"])])[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]
+    if not history:
+        history = [asset["base_price"]]
+    plot_rows = max(6, safe_int(height, 12) - 4)
+    low = min(history)
+    high = max(history)
+    span = max(1, high - low)
+    columns = [max(1, int(round(((price - low) / span) * plot_rows))) for price in history]
+    lines = [f"区间 ${low} - ${high}   现价 ${history[-1]}   共 {len(history)} 天"]
+    for row in range(plot_rows, 0, -1):
+        level_price = low + (span * row / plot_rows)
+        line = "".join(
+            colored("█", C.GREEN if idx == len(history) - 1 or history[idx] >= history[idx - 1] else C.RED)
+            if col >= row else " "
+            for idx, col in enumerate(columns)
+        )
+        lines.append(f"{int(round(level_price)):>4} {line}")
+    scale = [" "] * len(history)
+    for idx in range(0, len(history), 5):
+        marker = str(idx + 1)
+        for offset, ch in enumerate(marker):
+            pos = idx + offset
+            if pos < len(scale):
+                scale[pos] = ch
+    lines.append(f"{str(low).rjust(4)} {'─' * len(history)}")
+    lines.append("     " + "".join(scale))
+    lines.append(f"     D01-D{len(history):02d}")
+    return lines[:max(1, height)]
 
 
 def mini_chart(history, width=16):
@@ -1580,6 +1704,7 @@ def pawnshop_trade_help_lines():
         "V1    进入 1 号资产详情",
         "V 6   进入 6 号资产详情",
         "BUY/SELL 命令请在单标的页使用",
+        "S     主页快速跳天",
         "主页主要负责看盘和选标的",
     ]
 
@@ -1749,14 +1874,41 @@ def location_hint_lines(current):
             parts.append(colored(f"[{text}]", C.GREEN))
         else:
             parts.append(colored(text, C.CYAN))
+    if current == "pawnshop":
+        parts.extend([
+            colored("STAT统计", C.YELLOW),
+            colored("S跳天", C.BLUE),
+        ])
+    else:
+        parts.extend([
+            colored("S统计", C.YELLOW),
+            colored("SKIP跳天", C.BLUE),
+        ])
     parts.extend([
-        colored("S统计", C.YELLOW),
         colored("E导出", C.MAGENTA),
         colored("G补贴", C.YELLOW),
-        colored("SKIP跳天", C.BLUE),
         colored("0退出" if current == "home" else "0回家", C.RED),
     ])
     return ["  ".join(parts)]
+
+
+def parse_global_setting_command(choice):
+    tokens = [token for token in (choice or "").strip().upper().replace(",", " ").split() if token]
+    if len(tokens) == 1 and tokens[0] == "EXPAND":
+        return {"action": "toggle", "name": "expand"}
+    if len(tokens) < 3 or tokens[0] != "P":
+        return None
+    if tokens[1] == "TRIG" and len(tokens) == 3 and tokens[2] == "EXPAND":
+        return {"action": "toggle", "name": "expand"}
+    if tokens[1] == "SET":
+        joined = "".join(tokens[2:])
+        if "=" not in joined:
+            return None
+        name, raw_value = joined.split("=", 1)
+        if name != "EXPAND" or raw_value not in {"0", "1"}:
+            return None
+        return {"action": "set", "name": "expand", "value": int(raw_value)}
+    return None
 
 
 def header(chips, slot=None, stats=None, profile=None):
@@ -1798,6 +1950,13 @@ def header(chips, slot=None, stats=None, profile=None):
 
 def global_command_result(choice, chips, slot, stats, profile):
     choice = (choice or "").strip().upper()
+    preference_command = parse_global_setting_command(choice)
+    if preference_command:
+        if preference_command["action"] == "toggle":
+            toggle_global_setting(preference_command["name"])
+        elif preference_command["action"] == "set":
+            set_global_setting(preference_command["name"], preference_command["value"])
+        return chips, None
     travel_map = {
         "H": "home",
         "C": "casino",
@@ -1811,8 +1970,14 @@ def global_command_result(choice, chips, slot, stats, profile):
     if choice in travel_map:
         travel_to(chips, slot, stats, profile, travel_map[choice])
         return chips, travel_map[choice]
-    if choice == 'S':
+    if choice in {'STAT', 'STATS'}:
         show_stats(chips, stats, profile)
+        return chips, None
+    if choice == 'S':
+        if profile.get("location", "home") == "pawnshop":
+            chips = skip_to_next_day(chips, slot, stats, profile)
+        else:
+            show_stats(chips, stats, profile)
         return chips, None
     if choice == 'E':
         path = export_review_data(slot, chips, stats, profile)
@@ -1873,7 +2038,7 @@ def bank_menu(chips, slot, stats, profile):
             f"净资产:     {colored('$' + str(assets), C.YELLOW if assets > 0 else C.RED)}",
             f"安全比率:   {colored(f'{ratio:.2f}', C.MAGENTA)}",
             f"本次最多取: {colored('$' + str(max_withdraw), C.WHITE)}",
-            f"当前可借:   {colored('$' + str(next_borrow), C.GREEN if next_borrow > 0 else C.DIM)}",
+            f"总可借额:   {colored('$' + str(next_borrow), C.GREEN if next_borrow > 0 else C.DIM)}",
             f"结息倒计时: {colored(str(DAILY_OPERATION_COUNT - operation_progress(profile)), C.YELLOW)} 操作",
         ]
         action_lines = [
@@ -1893,7 +2058,7 @@ def bank_menu(chips, slot, stats, profile):
             box(action_lines, width=34, title="银行操作", color=C.WHITE),
             box([
                 "取钱后，现金不能超过 净资产 x 安全比率",
-                "借款按一档→二档→三档开放。",
+                "借款按一档→二档→三档开放，可一次跨档补满。",
                 f"每 {DAILY_OPERATION_COUNT} 次操作自动结算一天利息。",
                 "现金为负时，可用一键补缺自动回填。",
                 "",
@@ -2019,13 +2184,17 @@ def bank_menu(chips, slot, stats, profile):
                 print(notice)
             pause()
         elif choice == '4':
-            tier_index = next_loan_tier_index(chips, profile)
-            if tier_index is None or next_borrow <= 0:
+            borrow_plan = loan_borrow_plan(chips, profile)
+            if not borrow_plan or next_borrow <= 0:
                 print(colored("  当前没有可借额度。", C.RED))
                 pause()
                 continue
-            print(colored(f"  当前档位最少借款 ${min_borrow}。", C.DIM))
-            print(colored(f"  将进入{LOAN_TIERS[tier_index]['name']}，日息 {LOAN_TIERS[tier_index]['daily_rate'] * 100:.2f}%。", C.DIM))
+            plan_hint = " / ".join(
+                f"{item['tier_name']} ${item['amount']} @ {item['daily_rate'] * 100:.2f}%"
+                for item in borrow_plan
+            )
+            print(colored(f"  最少借款 ${min_borrow}，本次最多可直接借 ${next_borrow}。", C.DIM))
+            print(colored(f"  将按顺序自动分配: {plan_hint}", C.DIM))
             print(f"  输入借款金额 ({min_borrow}-{next_borrow})，或输入 0 取消:")
             try:
                 amount = int(input(colored("  > ", C.YELLOW)))
@@ -2034,11 +2203,18 @@ def bank_menu(chips, slot, stats, profile):
             if amount == 0:
                 continue
             if amount < min_borrow or amount > next_borrow:
-                print(colored("  超出当前档位可借范围。", C.RED))
+                print(colored("  超出当前总可借范围。", C.RED))
+                pause()
+                continue
+            chosen_plan = loan_borrow_plan(chips, profile, amount)
+            borrowed = sum(item["amount"] for item in chosen_plan)
+            if borrowed != amount:
+                print(colored("  当前贷款分档不足以完成这次借款。", C.RED))
                 pause()
                 continue
             before = state_snapshot(chips, profile)
-            profile["loans"][tier_index]["balance"] += amount
+            for item in chosen_plan:
+                profile["loans"][item["tier_index"]]["balance"] += item["amount"]
             chips += amount
             stats["loan_borrowed_total"] += amount
             notices = record_operations(chips, stats, profile, 1)
@@ -2049,16 +2225,24 @@ def bank_menu(chips, slot, stats, profile):
                 "borrow",
                 details={
                     "amount": amount,
-                    "tier_index": tier_index,
-                    "tier_name": LOAN_TIERS[tier_index]["name"],
-                    "daily_rate": LOAN_TIERS[tier_index]["daily_rate"],
+                    "allocations": [
+                        {
+                            "tier_index": item["tier_index"],
+                            "tier_name": item["tier_name"],
+                            "daily_rate": item["daily_rate"],
+                            "amount": item["amount"],
+                        }
+                        for item in chosen_plan
+                    ],
                 },
                 before=before,
                 after=state_snapshot(chips, profile),
                 operation_delta=1,
             )
             auto_save(slot, chips, stats, profile)
-            print(colored(f"  已从{LOAN_TIERS[tier_index]['name']}借入 ${amount}。", C.GREEN))
+            allocation_text = "，".join(f"{item['tier_name']} ${item['amount']}" for item in chosen_plan)
+            print(colored(f"  已借入 ${amount}。", C.GREEN))
+            print(colored(f"  分配: {allocation_text}", C.DIM))
             for notice in notices:
                 print(notice)
             pause()
@@ -2160,9 +2344,7 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
         effect = asset_news_effect(profile, asset["id"])
         day_pct = asset_price_change_pct(info["prev_price"], info["price"])
         price_color = C.GREEN if day_pct >= 0 else C.RED
-        clear()
-        header(chips, slot, stats, profile)
-        print(colored(f"\n  ── {asset['name']} ──\n", C.MAGENTA))
+        expanded = bool(get_global_setting("expand", 0))
         detail_lines = [
             f"分类:       {colored(asset['tag'], C.CYAN)}",
             f"当前价格:   {colored('$' + str(info['price']), price_color)}",
@@ -2174,24 +2356,34 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             f"可用资金:   {colored('$' + str(available_buying_power(chips, profile)), C.CYAN)}",
             f"现金/银行:  {colored('$' + str(chips), C.GREEN if chips > 0 else C.RED)} / {colored('$' + str(profile.get('bank', 0)), C.CYAN)}",
             f"日收益率:   {colored(format(asset['yield_rate'] * 100, '.2f') + '%', C.CYAN if asset['yield_rate'] > 0 else C.DIM)}",
-            "",
+            f"图表模式:   {colored('展开 30 天' if expanded else '默认 8 天', C.MAGENTA)}",
             asset["desc"],
         ]
+        detail_width = 34
+        chart_width = 58 if expanded else 31
+        chart_title = "近 30 天柱状图" if expanded else "近 8 天走势"
+        chart_lines = asset_expanded_chart_lines(profile, asset, height=len(detail_lines)) if expanded else asset_chart_lines(profile, asset)
+        clear()
+        header(chips, slot, stats, profile)
+        print(colored(f"\n  ── {asset['name']} ──\n", C.MAGENTA))
         cmd_lines = [
             "B 3   买入 3 份",
             "S 2   卖出 2 份",
             "B3    买入 3 份",
             "S2    卖出 2 份",
+            "EXPAND 切换走势图",
+            "P TRIG EXPAND",
+            "P SET EXPAND=0/1",
             "0     返回典当行",
         ]
         print(render_box_columns([
-            box(detail_lines, width=34, title="标的详情", color=C.CYAN),
-            box(asset_chart_lines(profile, asset), width=31, title="近 8 天走势", color=C.MAGENTA),
+            box(detail_lines, width=detail_width, title="标的详情", color=C.CYAN),
+            box(chart_lines, width=chart_width, title=chart_title, color=C.MAGENTA),
         ], gap=3))
         print()
         print(render_box_columns([
-            box(cmd_lines, width=24, title="交易命令", color=C.GREEN),
-            box(asset_specific_news_lines(profile, asset), width=41, title="消息面", color=C.YELLOW if effect["items"] else C.WHITE),
+            box(cmd_lines, width=30, title="交易命令", color=C.GREEN),
+            box(asset_specific_news_lines(profile, asset), width=35, title="消息面", color=C.YELLOW if effect["items"] else C.WHITE),
         ], gap=2))
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
         command = parse_single_asset_command(choice)
