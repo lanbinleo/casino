@@ -11,7 +11,7 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.2.3"
+GAME_VERSION = "v1.2.4"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
@@ -25,7 +25,8 @@ MAX_BANK_RATIO = 1.0
 DAILY_OPERATION_COUNT = 20
 MIN_LOAN_AMOUNT = 3000
 PAWNSHOP_COMPACT_HISTORY_DAYS = 8
-PAWNSHOP_EXPANDED_HISTORY_DAYS = 50
+PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS = 55
+PAWNSHOP_MAX_HISTORY_DAYS = 180
 BANK_DAILY_INTEREST = 0.0012
 LEGACY_LOAN_TIERS = [
     {"name": "一档", "daily_rate": 0.0035},
@@ -387,6 +388,7 @@ def default_pawnshop_state():
 def default_global_settings():
     return {
         "expand": 0,
+        "his": PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS,
     }
 
 
@@ -490,6 +492,8 @@ def normalize_global_settings(settings):
     if isinstance(settings, dict):
         if "expand" in settings:
             base["expand"] = 1 if safe_int(settings.get("expand", 0), 0) else 0
+        if "his" in settings:
+            base["his"] = min(PAWNSHOP_MAX_HISTORY_DAYS, max(PAWNSHOP_COMPACT_HISTORY_DAYS, safe_int(settings.get("his", PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS), PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS)))
     return base
 
 
@@ -507,7 +511,7 @@ def normalize_asset_state(asset_id, asset_state):
     if isinstance(asset_state, dict):
         for key, value in asset_state.items():
             if key == "history" and isinstance(value, list):
-                cleaned = [max(1, safe_int(item, asset["base_price"])) for item in value[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]]
+                cleaned = [max(1, safe_int(item, asset["base_price"])) for item in value[-PAWNSHOP_MAX_HISTORY_DAYS:]]
                 base["history"] = cleaned or [asset["base_price"]]
             elif key in {"avg_cost", "short_avg_cost"}:
                 base[key] = max(0.0, safe_float(value, 0.0))
@@ -520,7 +524,7 @@ def normalize_asset_state(asset_id, asset_state):
     base["passive_income_total"] = max(0, safe_int(base.get("passive_income_total", 0), 0))
     base["short_shares"] = max(0, safe_int(base.get("short_shares", 0), 0))
     base["short_avg_cost"] = max(0.0, safe_float(base.get("short_avg_cost", 0.0), 0.0))
-    history = [max(asset["floor"], min(asset["ceiling"], safe_int(item, base["price"]))) for item in base.get("history", [])[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]]
+    history = [max(asset["floor"], min(asset["ceiling"], safe_int(item, base["price"]))) for item in base.get("history", [])[-PAWNSHOP_MAX_HISTORY_DAYS:]]
     if not history:
         history = [base["price"]]
     history[-1] = base["price"]
@@ -1004,7 +1008,7 @@ def apply_asset_market_day(chips, stats, profile):
         state["price"] = new_price
         history = state.setdefault("history", [])
         history.append(new_price)
-        state["history"] = history[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]
+        state["history"] = history[-PAWNSHOP_MAX_HISTORY_DAYS:]
 
         move_abs = abs(new_price - old_price)
         if biggest_move is None or move_abs > biggest_move["move_abs"]:
@@ -1702,6 +1706,16 @@ def ui_expand_enabled():
     return bool(get_global_setting("expand", 0))
 
 
+def pawnshop_expanded_history_days():
+    return min(
+        PAWNSHOP_MAX_HISTORY_DAYS,
+        max(
+            PAWNSHOP_COMPACT_HISTORY_DAYS,
+            safe_int(get_global_setting("his", PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS), PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS),
+        ),
+    )
+
+
 def ui_width(compact, expanded=None):
     if expanded is None:
         expanded = compact + 16
@@ -1831,7 +1845,8 @@ def asset_chart_lines(profile, asset):
 
 def asset_expanded_chart_lines(profile, asset, height=12):
     state = market_asset_state(profile, asset["id"])
-    history = state.get("history", [state.get("price", asset["base_price"])])[-PAWNSHOP_EXPANDED_HISTORY_DAYS:]
+    history_days = pawnshop_expanded_history_days()
+    history = state.get("history", [state.get("price", asset["base_price"])])[-history_days:]
     if not history:
         history = [asset["base_price"]]
     plot_rows = max(6, safe_int(height, 12) - 4)
@@ -1947,6 +1962,7 @@ def pawnshop_trade_help_lines():
         "BUY/SELL 命令请在单标的页使用",
         "S/.   静态跳天",
         "EXPAND 可切宽屏布局",
+        f"P SET HIS={PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS} 可改展开天数",
         "主页主要负责看盘和选标的",
     ]
 
@@ -2188,9 +2204,10 @@ def parse_global_setting_command(choice):
         if "=" not in joined:
             return None
         name, raw_value = joined.split("=", 1)
-        if name != "EXPAND" or raw_value not in {"0", "1"}:
-            return None
-        return {"action": "set", "name": "expand", "value": int(raw_value)}
+        if name == "EXPAND" and raw_value in {"0", "1"}:
+            return {"action": "set", "name": "expand", "value": int(raw_value)}
+        if name == "HIS" and raw_value.isdigit():
+            return {"action": "set", "name": "his", "value": int(raw_value)}
     return None
 
 
@@ -2709,6 +2726,7 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
         day_pct = asset_price_change_pct(info["prev_price"], info["price"])
         price_color = C.GREEN if day_pct >= 0 else C.RED
         expanded = bool(get_global_setting("expand", 0))
+        history_days = pawnshop_expanded_history_days()
         price_delta = pawnshop_asset_skip_delta(profile, asset["id"], "price_delta")
         value_delta = pawnshop_asset_skip_delta(profile, asset["id"], "market_value_delta")
         bank_delta = pawnshop_skip_summary(profile).get("bank_delta", 0)
@@ -2724,12 +2742,12 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             f"可用资金:   {colored(fmt_money(available_buying_power(chips, profile)), C.CYAN)}",
             f"现金/银行:  {colored(fmt_money(chips), C.GREEN if chips > 0 else C.RED)} / {colored(fmt_money(profile.get('bank', 0)), C.CYAN)}{fmt_delta_suffix(bank_delta)}",
             f"日收益率:   {colored(format(asset['yield_rate'] * 100, '.2f') + '%', C.CYAN if asset['yield_rate'] > 0 else C.DIM)}",
-            f"图表模式:   {colored('展开 30 天' if expanded else '默认 8 天', C.MAGENTA)}",
+            f"图表模式:   {colored(f'展开 {history_days} 天' if expanded else f'默认 {PAWNSHOP_COMPACT_HISTORY_DAYS} 天', C.MAGENTA)}",
             asset["desc"],
         ]
         detail_width = ui_width(34, 42)
         chart_width = 68 if expanded else ui_width(31, 40)
-        chart_title = "近 30 天柱状图" if expanded else "近 8 天走势"
+        chart_title = f"近 {history_days} 天柱状图" if expanded else f"近 {PAWNSHOP_COMPACT_HISTORY_DAYS} 天走势"
         chart_lines = asset_expanded_chart_lines(profile, asset, height=len(detail_lines)) if expanded else asset_chart_lines(profile, asset)
         clear()
         header(chips, slot, stats, profile)
@@ -2743,6 +2761,7 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             "B0.5  买 50% 仓位",
             "S0.5  卖 50% 持仓",
             "EXPAND 切换走势图",
+            "P SET HIS=55",
             "P TRIG EXPAND",
             "P SET EXPAND=0/1",
             "0     返回典当行",
