@@ -11,7 +11,7 @@ from datetime import datetime
 # ============================================================
 # 存档系统
 # ============================================================
-GAME_VERSION = "v1.2.4"
+GAME_VERSION = "v1.2.5"
 SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saves")
 EXPORT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 FIRE_STATION_AI_RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fire_station_ai", "runs")
@@ -2399,7 +2399,10 @@ def bank_menu(chips, slot, stats, profile):
             print(colored(f"  当前现金欠款 {fmt_money(shortfall)}，在补齐前不能参加任何赌桌。", C.RED))
 
         choice = input(colored("\n  选择 > ", C.YELLOW)).strip().upper()
-        chips, global_result = global_command_result(choice, chips, slot, stats, profile)
+        if choice == '7':
+            global_result = "__local__"
+        else:
+            chips, global_result = global_command_result(choice, chips, slot, stats, profile)
         if global_result == "__exit__":
             return chips, "__exit__"
         if global_result in LOCATIONS and global_result != "bank":
