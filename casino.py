@@ -27,6 +27,13 @@ MIN_LOAN_AMOUNT = 3000
 PAWNSHOP_COMPACT_HISTORY_DAYS = 8
 PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS = 55
 PAWNSHOP_MAX_HISTORY_DAYS = 180
+PAWNSHOP_CHART_STYLES = {"line", "bar"}
+PAWNSHOP_CHART_MARKERS = {
+    "round": "●",
+    "square": "■",
+    "diamond": "◆",
+    "star": "✦",
+}
 BANK_DAILY_INTEREST = 0.0012
 LEGACY_LOAN_TIERS = [
     {"name": "一档", "daily_rate": 0.0035},
@@ -40,6 +47,16 @@ VIP_DAILY_RATES = [0.0120, 0.0100, 0.0085, 0.0072, 0.0060, 0.0050, 0.0042, 0.003
 HONOR_POINT_COST = 100
 HONOR_TARGET = 10 ** 14
 GLOBAL_SETTINGS = None
+ASSET_YIELD_TIERS = {
+    "low": 0.0014,
+    "mid": 0.0029,
+    "high": 0.0044,
+}
+ASSET_VOLATILITY_TIERS = {
+    "low": 0.018,
+    "mid": 0.045,
+    "high": 0.090,
+}
 LOCATIONS = {
     "home": "家里",
     "casino": "赌场",
@@ -53,11 +70,35 @@ ASSET_MARKETS = [
         "tag": "稳健",
         "base_price": 120,
         "drift": 0.002,
-        "volatility": 0.015,
-        "yield_rate": 0.0014,
+        "volatility": ASSET_VOLATILITY_TIERS["low"],
+        "yield_rate": ASSET_YIELD_TIERS["low"],
         "floor": 90,
         "ceiling": 165,
-        "desc": "像比银行更灵活一点的慢收益票据。",
+        "desc": "低波低息。适合放底仓，像比银行更灵活一点的慢收益票据。",
+    },
+    {
+        "id": "clinic_receipts",
+        "name": "诊所应收单",
+        "tag": "稳健",
+        "base_price": 132,
+        "drift": 0.002,
+        "volatility": 0.022,
+        "yield_rate": ASSET_YIELD_TIERS["mid"],
+        "floor": 98,
+        "ceiling": 188,
+        "desc": "低波中息。回款慢但稳，适合拿来做稳健现金流仓位。",
+    },
+    {
+        "id": "parking_contract",
+        "name": "停车场租约",
+        "tag": "稳健",
+        "base_price": 108,
+        "drift": 0.002,
+        "volatility": 0.026,
+        "yield_rate": ASSET_YIELD_TIERS["high"],
+        "floor": 72,
+        "ceiling": 170,
+        "desc": "低波高息。车位现金流很扎实，是慢热但能打的收租盘。",
     },
     {
         "id": "harbor_shipping",
@@ -65,145 +106,79 @@ ASSET_MARKETS = [
         "tag": "经营",
         "base_price": 112,
         "drift": 0.001,
-        "volatility": 0.060,
-        "yield_rate": 0.0022,
-        "floor": 60,
-        "ceiling": 210,
-        "desc": "吃港口吞吐量，旺季很香，停航时会闷得难受。",
-    },
-    {
-        "id": "vending_route",
-        "name": "售货机点位",
-        "tag": "经营",
-        "base_price": 80,
-        "drift": 0.001,
-        "volatility": 0.040,
-        "yield_rate": 0.0044,
-        "floor": 45,
-        "ceiling": 145,
-        "desc": "现金流不错，但偶尔会停电、卡货、被人顺走两瓶汽水。",
+        "volatility": ASSET_VOLATILITY_TIERS["mid"],
+        "yield_rate": ASSET_YIELD_TIERS["low"],
+        "floor": 64,
+        "ceiling": 205,
+        "desc": "中波低息。吃港口吞吐量，行情会晃，但股息不算厚。",
     },
     {
         "id": "pawn_notes",
         "name": "典当凭单",
         "tag": "经营",
-        "base_price": 140,
-        "drift": 0.003,
+        "base_price": 138,
+        "drift": 0.002,
         "volatility": 0.050,
-        "yield_rate": 0.0028,
-        "floor": 85,
-        "ceiling": 220,
-        "desc": "和街区资金周转挂钩，回报稳定但不算安静。",
+        "yield_rate": ASSET_YIELD_TIERS["mid"],
+        "floor": 88,
+        "ceiling": 215,
+        "desc": "中波中息。街区资金周转一活跃，这张票就会自己滚起来。",
     },
     {
-        "id": "arcade_lease",
-        "name": "街机厅牌照",
+        "id": "vending_route",
+        "name": "售货机点位",
         "tag": "经营",
-        "base_price": 95,
-        "drift": 0.002,
-        "volatility": 0.055,
-        "yield_rate": 0.0032,
-        "floor": 48,
-        "ceiling": 180,
-        "desc": "年轻人多的时候很赚，一阵风向不对也会掉头。",
-    },
-    {
-        "id": "clinic_receipts",
-        "name": "诊所应收单",
-        "tag": "稳健",
-        "base_price": 134,
-        "drift": 0.002,
-        "volatility": 0.028,
-        "yield_rate": 0.0019,
-        "floor": 98,
-        "ceiling": 188,
-        "desc": "回款慢但稳，适合拿来垫长期底仓。",
-    },
-    {
-        "id": "parking_contract",
-        "name": "停车场租约",
-        "tag": "经营",
-        "base_price": 108,
+        "base_price": 82,
         "drift": 0.001,
-        "volatility": 0.035,
-        "yield_rate": 0.0026,
-        "floor": 70,
-        "ceiling": 172,
-        "desc": "现金流平稳，节假日旺，修路时会闷一阵。",
-    },
-    {
-        "id": "market_stalls",
-        "name": "夜市摊位证",
-        "tag": "经营",
-        "base_price": 92,
-        "drift": 0.001,
-        "volatility": 0.048,
-        "yield_rate": 0.0038,
-        "floor": 52,
-        "ceiling": 165,
-        "desc": "人流来了就像印钞，管制一紧也会被砸一下。",
-    },
-    {
-        "id": "cold_storage",
-        "name": "冷库仓位",
-        "tag": "稳健",
-        "base_price": 148,
-        "drift": 0.002,
-        "volatility": 0.022,
-        "yield_rate": 0.0016,
-        "floor": 112,
-        "ceiling": 205,
-        "desc": "偏慢但抗打，适合给大仓做压舱石。",
-    },
-    {
-        "id": "laundry_chain",
-        "name": "洗衣连锁票",
-        "tag": "经营",
-        "base_price": 126,
-        "drift": 0.002,
-        "volatility": 0.038,
-        "yield_rate": 0.0031,
-        "floor": 84,
-        "ceiling": 198,
-        "desc": "日常刚需生意，赚得不炸裂，但下限不错。",
+        "volatility": 0.040,
+        "yield_rate": ASSET_YIELD_TIERS["high"],
+        "floor": 46,
+        "ceiling": 150,
+        "desc": "中波高息。现金流非常顺手，但停电、卡货和点位调整会让它抖一下。",
     },
     {
         "id": "machine_parts",
         "name": "零件仓单",
         "tag": "投机",
-        "base_price": 88,
+        "base_price": 86,
         "drift": 0.000,
-        "volatility": 0.085,
-        "yield_rate": 0.0000,
-        "floor": 34,
-        "ceiling": 205,
-        "desc": "吃抢修潮和缺货传闻，节奏很快。",
+        "volatility": 0.082,
+        "yield_rate": 0.0010,
+        "floor": 38,
+        "ceiling": 198,
+        "desc": "高波低息。吃抢修潮和缺货传闻，涨跌猛，但仓储分成很薄。",
     },
     {
-        "id": "lamp_oil",
-        "name": "洋油期货",
+        "id": "market_stalls",
+        "name": "夜市摊位证",
         "tag": "投机",
-        "base_price": 100,
-        "drift": 0.000,
-        "volatility": 0.100,
-        "yield_rate": 0.0000,
-        "floor": 35,
-        "ceiling": 260,
-        "desc": "纯看情绪和传闻，涨得快，跌起来也快。",
+        "base_price": 92,
+        "drift": 0.001,
+        "volatility": 0.090,
+        "yield_rate": ASSET_YIELD_TIERS["mid"],
+        "floor": 44,
+        "ceiling": 190,
+        "desc": "高波中息。人流一爆就是印钞，管制一紧也会直接翻脸。",
     },
     {
-        "id": "river_metal",
-        "name": "河道废铜票",
+        "id": "arcade_lease",
+        "name": "街机厅牌照",
         "tag": "投机",
-        "base_price": 96,
-        "drift": 0.000,
-        "volatility": 0.092,
-        "yield_rate": 0.0000,
-        "floor": 36,
-        "ceiling": 228,
-        "desc": "吃价差和黑市消息，行情来时很疯。",
+        "base_price": 98,
+        "drift": 0.001,
+        "volatility": 0.098,
+        "yield_rate": 0.0048,
+        "floor": 42,
+        "ceiling": 245,
+        "desc": "高波高息。年轻人多的时候像开闸放水，风向一偏也会摔得很凶。",
     },
 ]
+LEGACY_ASSET_MIGRATIONS = {
+    "cold_storage": "city_bonds",
+    "laundry_chain": "pawn_notes",
+    "lamp_oil": "machine_parts",
+    "river_metal": "machine_parts",
+}
 PAWNSHOP_NEWS_TEMPLATES = [
     "{asset}传出{direction}{magnitude}风声，接下来几天可能{multiplier}放大波动。",
     "{asset}被街区消息点名，市场预期转向{direction}，幅度偏{magnitude}。",
@@ -389,6 +364,9 @@ def default_global_settings():
     return {
         "expand": 0,
         "his": PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS,
+        "chart": "line",
+        "chart_point": "round",
+        "chart_grid": 1,
     }
 
 
@@ -494,6 +472,14 @@ def normalize_global_settings(settings):
             base["expand"] = 1 if safe_int(settings.get("expand", 0), 0) else 0
         if "his" in settings:
             base["his"] = min(PAWNSHOP_MAX_HISTORY_DAYS, max(PAWNSHOP_COMPACT_HISTORY_DAYS, safe_int(settings.get("his", PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS), PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS)))
+        chart_style = str(settings.get("chart", base["chart"]) or base["chart"]).lower()
+        if chart_style in PAWNSHOP_CHART_STYLES:
+            base["chart"] = chart_style
+        chart_point = str(settings.get("chart_point", base["chart_point"]) or base["chart_point"]).lower()
+        if chart_point in PAWNSHOP_CHART_MARKERS:
+            base["chart_point"] = chart_point
+        if "chart_grid" in settings:
+            base["chart_grid"] = 1 if safe_int(settings.get("chart_grid", 0), 0) else 0
     return base
 
 
@@ -503,6 +489,29 @@ def asset_definitions():
 
 def asset_definition_map():
     return {asset["id"]: asset for asset in ASSET_MARKETS}
+
+
+def merge_asset_position_state(target_state, incoming_state):
+    target_shares = safe_int(target_state.get("shares", 0), 0)
+    incoming_shares = safe_int(incoming_state.get("shares", 0), 0)
+    combined_shares = target_shares + incoming_shares
+    if combined_shares > 0:
+        target_cost = safe_float(target_state.get("avg_cost", 0.0), 0.0) * target_shares
+        incoming_cost = safe_float(incoming_state.get("avg_cost", 0.0), 0.0) * incoming_shares
+        target_state["avg_cost"] = (target_cost + incoming_cost) / combined_shares
+    target_state["shares"] = combined_shares
+    target_state["realized_profit"] = safe_int(target_state.get("realized_profit", 0), 0) + safe_int(incoming_state.get("realized_profit", 0), 0)
+    target_state["passive_income_total"] = safe_int(target_state.get("passive_income_total", 0), 0) + safe_int(incoming_state.get("passive_income_total", 0), 0)
+
+    target_short = safe_int(target_state.get("short_shares", 0), 0)
+    incoming_short = safe_int(incoming_state.get("short_shares", 0), 0)
+    combined_short = target_short + incoming_short
+    if combined_short > 0:
+        target_short_cost = safe_float(target_state.get("short_avg_cost", 0.0), 0.0) * target_short
+        incoming_short_cost = safe_float(incoming_state.get("short_avg_cost", 0.0), 0.0) * incoming_short
+        target_state["short_avg_cost"] = (target_short_cost + incoming_short_cost) / combined_short
+    target_state["short_shares"] = combined_short
+    return target_state
 
 
 def normalize_asset_state(asset_id, asset_state):
@@ -540,12 +549,20 @@ def normalize_pawnshop_state(state):
             asset_id = asset["id"]
             if asset_id in raw_assets:
                 base["assets"][asset_id] = normalize_asset_state(asset_id, raw_assets[asset_id])
+        for legacy_id, target_id in LEGACY_ASSET_MIGRATIONS.items():
+            if legacy_id in raw_assets and target_id in base["assets"]:
+                migrated = normalize_asset_state(target_id, raw_assets[legacy_id])
+                base["assets"][target_id] = merge_asset_position_state(base["assets"][target_id], migrated)
     elif isinstance(state, dict):
         # Forward-compatible fallback for older flat structures.
         for asset in ASSET_MARKETS:
             asset_id = asset["id"]
             if asset_id in state:
                 base["assets"][asset_id] = normalize_asset_state(asset_id, state[asset_id])
+        for legacy_id, target_id in LEGACY_ASSET_MIGRATIONS.items():
+            if legacy_id in state and target_id in base["assets"]:
+                migrated = normalize_asset_state(target_id, state[legacy_id])
+                base["assets"][target_id] = merge_asset_position_state(base["assets"][target_id], migrated)
     if isinstance(state, dict):
         active_news = state.get("active_news", [])
         news_history = state.get("news_history", [])
@@ -1716,6 +1733,38 @@ def pawnshop_expanded_history_days():
     )
 
 
+def pawnshop_chart_style():
+    style = str(get_global_setting("chart", "line") or "line").lower()
+    return style if style in PAWNSHOP_CHART_STYLES else "line"
+
+
+def pawnshop_chart_marker_name():
+    marker = str(get_global_setting("chart_point", "round") or "round").lower()
+    return marker if marker in PAWNSHOP_CHART_MARKERS else "round"
+
+
+def pawnshop_chart_marker():
+    return PAWNSHOP_CHART_MARKERS[pawnshop_chart_marker_name()]
+
+
+def pawnshop_chart_grid_enabled():
+    return bool(safe_int(get_global_setting("chart_grid", 1), 1))
+
+
+def pawnshop_chart_style_label():
+    return "折线点图" if pawnshop_chart_style() == "line" else "柱状图"
+
+
+def pawnshop_chart_marker_label():
+    labels = {
+        "round": "圆点",
+        "square": "方块",
+        "diamond": "菱形",
+        "star": "星点",
+    }
+    return labels.get(pawnshop_chart_marker_name(), "圆点")
+
+
 def ui_width(compact, expanded=None):
     if expanded is None:
         expanded = compact + 16
@@ -1823,38 +1872,20 @@ def total_unrealized_profit(profile):
     return sum(asset_position_summary(profile, asset)["unrealized"] for asset in ASSET_MARKETS)
 
 
-def asset_chart_lines(profile, asset):
-    state = market_asset_state(profile, asset["id"])
-    history = state.get("history", [state.get("price", asset["base_price"])])[-PAWNSHOP_COMPACT_HISTORY_DAYS:]
-    if not history:
-        history = [asset["base_price"]]
-    low = min(history)
-    high = max(history)
-    span = max(1, high - low)
-    lines = []
-    for idx, price in enumerate(history, start=max(1, len(history) - 7)):
-        bar_len = 1 + int(((price - low) / span) * 12)
-        if idx == 1:
-            color = C.DIM
-        else:
-            prev = history[idx - 2]
-            color = C.GREEN if price >= prev else C.RED
-        lines.append(f"D{idx:02d} {fmt_int(price).rjust(5)} {colored('█' * bar_len, color)}")
-    return lines
+def chart_point_color(history, index):
+    if len(history) <= 1:
+        return C.CYAN
+    if index <= 0:
+        return C.DIM
+    return C.GREEN if history[index] >= history[index - 1] else C.RED
 
 
-def asset_expanded_chart_lines(profile, asset, height=12):
-    state = market_asset_state(profile, asset["id"])
-    history_days = pawnshop_expanded_history_days()
-    history = state.get("history", [state.get("price", asset["base_price"])])[-history_days:]
-    if not history:
-        history = [asset["base_price"]]
-    plot_rows = max(6, safe_int(height, 12) - 4)
+def asset_bar_chart_lines(history, plot_rows, header_text, footer_label):
     low = min(history)
     high = max(history)
     span = max(1, high - low)
     columns = [max(1, int(round(((price - low) / span) * plot_rows))) for price in history]
-    lines = [f"区间 {fmt_money(low)} - {fmt_money(high)}   现价 {fmt_money(history[-1])}   共 {len(history)} 天"]
+    lines = [header_text]
     for row in range(plot_rows, 0, -1):
         level_price = low + (span * row / plot_rows)
         line = "".join(
@@ -1872,7 +1903,71 @@ def asset_expanded_chart_lines(profile, asset, height=12):
                 scale[pos] = ch
     lines.append(f"{fmt_int(low).rjust(5)} {'─' * len(history)}")
     lines.append("     " + "".join(scale))
-    lines.append(f"     D01-D{len(history):02d}")
+    lines.append(footer_label)
+    return lines
+
+
+def asset_line_chart_lines(history, plot_rows, header_text, footer_label):
+    low = min(history)
+    high = max(history)
+    span = max(1, high - low)
+    marker = pawnshop_chart_marker()
+    show_grid = pawnshop_chart_grid_enabled()
+    lines = [header_text]
+    row_denominator = max(1, plot_rows - 1)
+    positions = [int(round((high - price) / span * row_denominator)) for price in history]
+    guide_rows = {0, plot_rows - 1}
+    if plot_rows >= 5:
+        guide_rows.add(plot_rows // 2)
+    for row in range(plot_rows):
+        level_price = high - (span * row / row_denominator)
+        cells = []
+        for idx, point_row in enumerate(positions):
+            if point_row == row:
+                cells.append(colored(marker, chart_point_color(history, idx)))
+            elif show_grid and row in guide_rows:
+                cells.append(colored("·", C.DIM))
+            else:
+                cells.append(" ")
+        lines.append(f"{fmt_int(int(round(level_price))).rjust(5)} {''.join(cells)}")
+    scale = [" "] * len(history)
+    for idx in range(0, len(history), 5):
+        marker_text = str(idx + 1)
+        for offset, ch in enumerate(marker_text):
+            pos = idx + offset
+            if pos < len(scale):
+                scale[pos] = ch
+    lines.append(f"{fmt_int(low).rjust(5)} {'─' * len(history)}")
+    lines.append("     " + "".join(scale))
+    lines.append(footer_label)
+    return lines
+
+
+def asset_chart_lines(profile, asset):
+    state = market_asset_state(profile, asset["id"])
+    history = state.get("history", [state.get("price", asset["base_price"])])[-PAWNSHOP_COMPACT_HISTORY_DAYS:]
+    if not history:
+        history = [asset["base_price"]]
+    header_text = f"区间 {fmt_money(min(history))} - {fmt_money(max(history))}   现价 {fmt_money(history[-1])}"
+    footer_label = f"     D01-D{len(history):02d}"
+    if pawnshop_chart_style() == "bar":
+        return asset_bar_chart_lines(history, 4, header_text, footer_label)
+    return asset_line_chart_lines(history, 4, header_text, footer_label)
+
+
+def asset_expanded_chart_lines(profile, asset, height=12):
+    state = market_asset_state(profile, asset["id"])
+    history_days = pawnshop_expanded_history_days()
+    history = state.get("history", [state.get("price", asset["base_price"])])[-history_days:]
+    if not history:
+        history = [asset["base_price"]]
+    plot_rows = max(6, safe_int(height, 12) - 4)
+    header_text = f"区间 {fmt_money(min(history))} - {fmt_money(max(history))}   现价 {fmt_money(history[-1])}   共 {len(history)} 天"
+    footer_label = f"     D01-D{len(history):02d}"
+    if pawnshop_chart_style() == "bar":
+        lines = asset_bar_chart_lines(history, plot_rows, header_text, footer_label)
+    else:
+        lines = asset_line_chart_lines(history, plot_rows, header_text, footer_label)
     return lines[:max(1, height)]
 
 
@@ -1963,6 +2058,9 @@ def pawnshop_trade_help_lines():
         "S/.   静态跳天",
         "EXPAND 可切宽屏布局",
         f"P SET HIS={PAWNSHOP_DEFAULT_EXPANDED_HISTORY_DAYS} 可改展开天数",
+        "P SET CHART=LINE/BAR",
+        "P SET POINT=ROUND/SQUARE/DIAMOND/STAR",
+        "P SET GRID=0/1",
         "主页主要负责看盘和选标的",
     ]
 
@@ -2195,10 +2293,14 @@ def parse_global_setting_command(choice):
     tokens = [token for token in (choice or "").strip().upper().replace(",", " ").split() if token]
     if len(tokens) == 1 and tokens[0] == "EXPAND":
         return {"action": "toggle", "name": "expand"}
+    if len(tokens) == 1 and tokens[0] == "GRID":
+        return {"action": "toggle", "name": "chart_grid"}
     if len(tokens) < 3 or tokens[0] != "P":
         return None
     if tokens[1] == "TRIG" and len(tokens) == 3 and tokens[2] == "EXPAND":
         return {"action": "toggle", "name": "expand"}
+    if tokens[1] == "TRIG" and len(tokens) == 3 and tokens[2] == "GRID":
+        return {"action": "toggle", "name": "chart_grid"}
     if tokens[1] == "SET":
         joined = "".join(tokens[2:])
         if "=" not in joined:
@@ -2208,6 +2310,12 @@ def parse_global_setting_command(choice):
             return {"action": "set", "name": "expand", "value": int(raw_value)}
         if name == "HIS" and raw_value.isdigit():
             return {"action": "set", "name": "his", "value": int(raw_value)}
+        if name == "GRID" and raw_value in {"0", "1"}:
+            return {"action": "set", "name": "chart_grid", "value": int(raw_value)}
+        if name == "CHART" and raw_value in {"LINE", "BAR"}:
+            return {"action": "set", "name": "chart", "value": raw_value.lower()}
+        if name == "POINT" and raw_value in {"ROUND", "SQUARE", "DIAMOND", "STAR"}:
+            return {"action": "set", "name": "chart_point", "value": raw_value.lower()}
     return None
 
 
@@ -2746,11 +2854,12 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             f"现金/银行:  {colored(fmt_money(chips), C.GREEN if chips > 0 else C.RED)} / {colored(fmt_money(profile.get('bank', 0)), C.CYAN)}{fmt_delta_suffix(bank_delta)}",
             f"日收益率:   {colored(format(asset['yield_rate'] * 100, '.2f') + '%', C.CYAN if asset['yield_rate'] > 0 else C.DIM)}",
             f"图表模式:   {colored(f'展开 {history_days} 天' if expanded else f'默认 {PAWNSHOP_COMPACT_HISTORY_DAYS} 天', C.MAGENTA)}",
+            f"图表样式:   {colored(pawnshop_chart_style_label(), C.YELLOW)} / {colored(pawnshop_chart_marker_label(), C.WHITE)} / 网格 {'开' if pawnshop_chart_grid_enabled() else '关'}",
             asset["desc"],
         ]
         detail_width = ui_width(34, 42)
         chart_width = 68 if expanded else ui_width(31, 40)
-        chart_title = f"近 {history_days} 天柱状图" if expanded else f"近 {PAWNSHOP_COMPACT_HISTORY_DAYS} 天走势"
+        chart_title = f"近 {history_days} 天{pawnshop_chart_style_label()}" if expanded else f"近 {PAWNSHOP_COMPACT_HISTORY_DAYS} 天{pawnshop_chart_style_label()}"
         chart_lines = asset_expanded_chart_lines(profile, asset, height=len(detail_lines)) if expanded else asset_chart_lines(profile, asset)
         clear()
         header(chips, slot, stats, profile)
@@ -2765,6 +2874,9 @@ def pawnshop_asset_detail_menu(chips, slot, stats, profile, asset):
             "S0.5  卖 50% 持仓",
             "EXPAND 切换走势图",
             "P SET HIS=55",
+            "P SET CHART=LINE/BAR",
+            "P SET POINT=ROUND/SQUARE/DIAMOND/STAR",
+            "P SET GRID=0/1",
             "P TRIG EXPAND",
             "P SET EXPAND=0/1",
             "0     返回典当行",
